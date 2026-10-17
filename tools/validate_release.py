@@ -35,8 +35,12 @@ def main() -> int:
         errors.append("manifest id must be taxoflow")
     if manifest.get("name") != "TaxoFlow Properties":
         errors.append("manifest name must be TaxoFlow Properties")
-    if manifest.get("version") != "1.0.0":
-        errors.append("manifest version must be 1.0.0")
+        
+    # FIX: Dynamically check the current version instead of hardcoding 1.0.0
+    current_version = str(manifest.get("version", ""))
+    if not re.fullmatch(r"\d+\.\d+\.\d+", current_version):
+        errors.append("manifest version must be in standard X.Y.Z format")
+        
     if not re.fullmatch(r"[a-z-]+", str(manifest.get("id", ""))):
         errors.append("manifest id must contain only lowercase letters and hyphens")
     if "obsidian" in str(manifest.get("id", "")).lower() or str(manifest.get("id", "")).endswith("plugin"):
@@ -44,8 +48,11 @@ def main() -> int:
     description = str(manifest.get("description", ""))
     if len(description) > 250 or not description.endswith("."):
         errors.append("manifest description must be at most 250 characters and end with a period")
-    if versions.get("1.0.0") != manifest.get("minAppVersion"):
-        errors.append("versions.json 1.0.0 entry must match manifest minAppVersion")
+        
+    # FIX: Dynamically cross-reference the current version against versions.json
+    if versions.get(current_version) != manifest.get("minAppVersion"):
+        errors.append(f"versions.json {current_version} entry must match manifest minAppVersion")
+        
     if data.get("schemaVersion") != 4 or data.get("profiles") != [] or data.get("activeProfileId") != "":
         errors.append("data.json must be a schema-v4 uninitialized configuration")
 
@@ -77,7 +84,7 @@ def main() -> int:
             print(f"- {error}")
         return 1
     print("Release validation passed.")
-    print(f"Plugin: {manifest['name']} ({manifest['id']}) {manifest['version']}")
+    print(f"Plugin: {manifest.get('name')} ({manifest.get('id')}) {current_version}")
     print("Verified manifest, versions, clean configuration, licensing, namespace, branding, and comment-free shipped JS/CSS.")
     return 0
 
