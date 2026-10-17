@@ -1,6 +1,6 @@
 # TaxoFlow Properties
 
-If you like this plugin, your [![Sponsorship](https://img.shields.io/badge/Sponsor_Physico--Academic-EA4AAA?style=for-the-badge&logo=github)](https://github.com/sponsors/Physico-Academic) would be much appreciated.
+If you like this plugin, your [![Sponsorship](https://img.shields.io/badge/Sponsorship-EA4AAA?style=for-the-badge&logo=github)](https://github.com/sponsors/Physico-Academic) would be much appreciated.
 
 TaxoFlow Properties manages configurable, profile-based taxonomies, context-dependent property suggestions, and automated folder routing in Obsidian. Selectors can use fixed options or cascading rules that depend on other properties, with full support for Text and List properties, display labels, safe defaults, folder organization, and Orphan Management.
 
