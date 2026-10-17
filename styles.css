@@ -1,0 +1,573 @@
+
+.taxoflow-options-input {
+  width: 100%;
+  min-height: 4.5rem;
+  font-family: var(--font-text);
+}
+
+.taxoflow-rule-parent-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--size-2-2);
+  margin: var(--size-4-2) 0 var(--size-4-4);
+}
+
+.taxoflow-rule-parent-row {
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  padding: var(--size-4-2) var(--size-4-3);
+}
+
+.taxoflow-rule-parent-label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-4-2);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+
+.taxoflow-rule-parent-label input {
+  margin-top: 0.25em;
+  flex: 0 0 auto;
+}
+
+.taxoflow-parent-value-editor {
+  margin-block: var(--size-4-3);
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+
+.taxoflow-parent-value-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-2-2);
+}
+
+.taxoflow-parent-value-heading h4 {
+  margin: 0;
+  font-size: var(--font-ui-medium);
+}
+
+.taxoflow-parent-value-search,
+.taxoflow-parent-value-add {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-block: var(--size-2-2);
+}
+
+.taxoflow-parent-value-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: var(--size-2-2);
+  max-height: 14rem;
+  overflow: auto;
+  padding: var(--size-2-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.taxoflow-parent-value-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-4-2);
+  min-width: 0;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+
+.taxoflow-parent-value-option input {
+  flex: 0 0 auto;
+  margin-top: 0.25em;
+}
+
+.taxoflow-parent-value-summary {
+  margin-block: var(--size-2-2);
+}
+
+.taxoflow-parent-value-add-button {
+  margin-top: var(--size-2-2);
+}
+
+.taxoflow-rule-toolbar {
+  margin-block: var(--size-4-2);
+}
+
+.taxoflow-rule-conditions {
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+.taxoflow-rule-conditions h3 {
+  margin-top: 0;
+  font-size: var(--font-ui-medium);
+}
+
+.taxoflow-rule-validation {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.taxoflow-modal {
+  max-height: min(85vh, 56rem);
+  overflow-y: auto;
+}
+
+.taxoflow-modal .modal-button-container {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-4);
+  padding-top: var(--size-4-2);
+  border-top: 1px solid var(--background-modifier-border);
+  position: sticky;
+  bottom: 0;
+  background: var(--background-primary);
+}
+
+.taxoflow-operation-preview {
+  padding: var(--size-4-3);
+  max-height: 35vh;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller);
+}
+
+.metadata-property[data-taxoflow-label] .metadata-property-key,
+.metadata-property-key[data-taxoflow-label],
+.taxoflow-property-key-label-host[data-taxoflow-label] {
+  position: relative;
+  text-decoration: none !important;
+}
+
+.metadata-property[data-taxoflow-label] .metadata-property-key-input:not(:focus) {
+  color: transparent !important;
+  caret-color: transparent !important;
+  text-decoration: none !important;
+  text-decoration-line: none !important;
+}
+
+.metadata-property-key[data-taxoflow-label]::after,
+.taxoflow-property-key-label-host[data-taxoflow-label]::after {
+  content: attr(data-taxoflow-label);
+  position: absolute;
+
+  inset-inline-start: calc(var(--size-4-4, 16px) + var(--size-2-2, 4px) + 10px);
+  inset-block-start: calc(50%);
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-family: var(--font-interface);
+  font-size: calc(var(--font-ui-small) + 1px);
+  font-weight: var(--font-normal, 400);
+  letter-spacing: normal;
+  line-height: normal;
+  text-decoration: none !important;
+  text-decoration-line: none !important;
+  text-shadow: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - var(--size-4-6));
+  pointer-events: none;
+}
+
+.metadata-property-key.taxoflow-key-editing::after,
+.taxoflow-property-key-label-host.taxoflow-key-editing::after,
+.metadata-property-key:has(.metadata-property-key-input:focus)::after,
+.taxoflow-property-key-label-host:has(.metadata-property-key-input:focus)::after {
+  display: none;
+}
+
+.taxoflow-delete-details,
+.taxoflow-delete-summary,
+.taxoflow-delete-preview,
+.taxoflow-delete-warning {
+  margin-block: var(--size-4-3);
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  overflow-wrap: anywhere;
+}
+
+.taxoflow-delete-details pre,
+.taxoflow-delete-summary pre {
+  margin-block: var(--size-4-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller);
+}
+
+.taxoflow-delete-details summary {
+  cursor: pointer;
+  color: var(--text-normal);
+  font-weight: var(--font-medium, 500);
+}
+
+.taxoflow-delete-note-list {
+  max-height: 35vh;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+
+.taxoflow-delete-note-row {
+  padding: var(--size-4-2) var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.taxoflow-delete-note-row:last-child { border-bottom: 0; }
+.taxoflow-delete-note-row code { overflow-wrap: anywhere; }
+.taxoflow-delete-note-row pre { margin-block: var(--size-2-2) 0; white-space: pre-wrap; font-size: var(--font-smaller); }
+
+.taxoflow-delete-warning {
+  border-color: var(--background-modifier-error);
+  color: var(--text-error);
+}
+
+.taxoflow-validation-summary-warning { color: var(--text-error); font-weight: var(--font-medium, 500); }
+.taxoflow-validation-summary-ok { color: var(--text-success); font-weight: var(--font-medium, 500); }
+.taxoflow-validation-list { max-height: 55vh; overflow: auto; }
+.taxoflow-validation-item { padding: var(--size-2-2) 0; border-bottom: 1px solid var(--background-modifier-border); }
+.taxoflow-validation-error strong { color: var(--text-error); }
+.taxoflow-validation-warning strong { color: var(--text-warning); }
+
+.taxoflow-settings .taxoflow-selector-card.is-collapsed .taxoflow-selector-details {
+  display: none;
+}
+
+.taxoflow-settings .taxoflow-selector-header {
+  align-items: center;
+}
+
+.taxoflow-settings .taxoflow-selector-card .taxoflow-selector-header .setting-item-name {
+  overflow-wrap: anywhere;
+}
+
+.taxoflow-settings .taxoflow-selector-card .taxoflow-selector-header .setting-item-description {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.taxoflow-settings .taxoflow-selector-card.is-collapsed {
+  padding-bottom: var(--size-4-2);
+}
+
+.taxoflow-settings .taxoflow-no-property-results {
+  margin-block: var(--size-4-3);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.taxoflow-settings .taxoflow-extra-labels-section {
+  margin-block: var(--size-4-3);
+}
+
+.taxoflow-settings .taxoflow-extra-label-row {
+  min-width: 0;
+}
+
+.taxoflow-settings .taxoflow-orphans-section {
+  margin-block: var(--size-4-3);
+  padding-top: 0;
+  border-top: 0;
+}
+.taxoflow-settings .taxoflow-orphans-list {
+  margin-block: var(--size-4-2);
+}
+
+.taxoflow-settings .taxoflow-orphans-list .setting-item {
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-block: var(--size-2-2);
+}
+.taxoflow-settings .taxoflow-orphans-list .setting-item:last-child {
+  border-bottom: 0;
+}
+
+.taxoflow-registration-modal { max-width: min(34rem, calc(100vw - 2rem)); }
+.metadata-property-value[data-taxoflow-optimistic-display] { position: relative; }
+.metadata-property-value[data-taxoflow-optimistic-display] > * { visibility: hidden !important; }
+.metadata-property-value[data-taxoflow-optimistic-display]::after { content: attr(data-taxoflow-optimistic-display); display: block; color: var(--text-normal); min-height: 1em; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; }
+
+.taxoflow-orphans-section .taxoflow-orphans-list .setting-item { align-items: center; gap: var(--size-4-2); }
+.taxoflow-orphan-occurrence { padding: var(--size-4-2) var(--size-4-3); border-bottom: 1px solid var(--background-modifier-border); }
+.taxoflow-orphan-occurrence:last-child { border-bottom: 0; }
+.taxoflow-orphan-occurrence pre { margin: var(--size-2-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--font-smaller); }
+.taxoflow-orphan-occurrence .setting-item { border: 0; padding: 0; }
+
+.taxoflow-settings .taxoflow-settings-section {
+  margin-block: var(--size-4-3);
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary-alt);
+}
+
+.taxoflow-settings .taxoflow-settings-section.is-collapsed {
+  border-bottom-left-radius: var(--radius-m);
+  border-bottom-right-radius: var(--radius-m);
+}
+.taxoflow-settings .taxoflow-settings-section.is-collapsed > .setting-item-heading {
+  border-bottom: 0;
+  border-bottom-left-radius: var(--radius-m);
+  border-bottom-right-radius: var(--radius-m);
+}
+
+.taxoflow-settings .taxoflow-settings-section > .setting-item-heading,
+.taxoflow-settings .taxoflow-active-profile-section > .setting-item-heading {
+  margin: 0;
+  padding: var(--size-4-3);
+  border: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.taxoflow-settings .taxoflow-active-profile-section > .setting-item-heading,
+.taxoflow-settings .taxoflow-properties-sticky-header > .setting-item-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-3);
+}
+
+.taxoflow-settings .taxoflow-active-profile-section > .setting-item-heading .setting-item-info,
+.taxoflow-settings .taxoflow-properties-sticky-header > .setting-item-heading .setting-item-info {
+  flex: 1 1 auto;
+  min-width: 8rem;
+  align-items: flex-start;
+}
+
+.taxoflow-settings .taxoflow-active-profile-section.has-data > .setting-item-heading .setting-item-control,
+.taxoflow-settings .taxoflow-properties-section.has-data .taxoflow-properties-sticky-header > .setting-item-heading .setting-item-control {
+  display: grid;
+
+  grid-template-columns: minmax(10rem, 16rem) auto auto auto;
+  gap: 14px;
+  align-items: center;
+  justify-content: end;
+  flex: 0 0 auto;
+}
+
+.taxoflow-invisible-spacer {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.taxoflow-settings .taxoflow-active-profile-section.has-data > .setting-item-heading .setting-item-control select,
+.taxoflow-settings .taxoflow-properties-section.has-data .taxoflow-properties-sticky-header > .setting-item-heading .setting-item-control .search-input-container {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.taxoflow-settings .taxoflow-active-profile-section > .setting-item-heading .setting-item-control,
+.taxoflow-settings .taxoflow-properties-sticky-header > .setting-item-heading .setting-item-control {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: var(--size-2-2);
+  min-width: 0;
+}
+.taxoflow-settings .taxoflow-active-profile-section > .setting-item-heading .setting-item-control select {
+  width: clamp(9rem, 20vw, 18rem);
+  max-width: 100%;
+}
+
+.taxoflow-settings .taxoflow-property-search {
+  margin: 0;
+}
+
+.taxoflow-settings .taxoflow-properties-sticky-header {
+  position: sticky;
+
+  top: -48px;
+
+  z-index: 10;
+  background-color: var(--taxoflow-container-bg, var(--background-primary-alt));
+  margin: 0;
+  padding: var(--size-4-3);
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.taxoflow-settings .taxoflow-properties-sticky-header > .setting-item-heading {
+  margin: 0;
+  padding-inline: 0;
+}
+
+.taxoflow-settings .taxoflow-properties-section.is-collapsed .taxoflow-properties-body { display: none; }
+
+.taxoflow-settings .taxoflow-properties-section.is-collapsed .taxoflow-properties-sticky-header {
+  border-bottom: 0;
+  border-radius: var(--radius-m);
+}
+
+.taxoflow-settings .taxoflow-active-profile-details[hidden],
+.taxoflow-settings .taxoflow-properties-body[hidden],
+.taxoflow-settings .taxoflow-extra-labels-body[hidden],
+.taxoflow-settings .taxoflow-orphans-body[hidden],
+.taxoflow-settings .taxoflow-maintenance-body[hidden],
+.taxoflow-settings .taxoflow-orphan-group-body[hidden],
+.taxoflow-settings .taxoflow-rule-card-details[hidden] { display: none !important; }
+
+.taxoflow-settings .taxoflow-maintenance-section { margin-block-end: 0; border-bottom: 0; }
+
+.taxoflow-settings .taxoflow-active-profile-details,
+.taxoflow-settings .taxoflow-maintenance-body,
+.taxoflow-settings .taxoflow-extra-labels-body,
+.taxoflow-settings .taxoflow-properties-body,
+.taxoflow-settings .taxoflow-orphans-body { padding-inline: var(--size-4-3); }
+
+.taxoflow-settings .taxoflow-active-profile-details > .setting-item,
+.taxoflow-settings .taxoflow-maintenance-body > .setting-item,
+.taxoflow-settings .taxoflow-extra-labels-body > .setting-item,
+.taxoflow-settings .taxoflow-selector-details > .setting-item,
+.taxoflow-settings .taxoflow-orphan-group-body .setting-item {
+  position: relative;
+  margin: 0;
+  padding: var(--size-4-3) 0;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.taxoflow-settings .taxoflow-active-profile-details > .setting-item::after,
+.taxoflow-settings .taxoflow-maintenance-body > .setting-item::after,
+.taxoflow-settings .taxoflow-extra-labels-body > .setting-item::after,
+.taxoflow-settings .taxoflow-selector-details > .setting-item::after,
+.taxoflow-settings .taxoflow-orphan-group-body .setting-item::after {
+  content: "";
+  position: absolute;
+  inset-inline: var(--size-4-3);
+  inset-block-end: 0;
+  height: 1px;
+  background: var(--background-modifier-border);
+}
+
+.taxoflow-settings .taxoflow-active-profile-details > .setting-item:last-child::after,
+.taxoflow-settings .taxoflow-maintenance-body > .setting-item:last-child::after,
+.taxoflow-settings .taxoflow-extra-labels-body > .setting-item:last-child::after,
+.taxoflow-settings .taxoflow-selector-details > .setting-item:last-child::after,
+.taxoflow-settings .taxoflow-orphan-group-body .setting-item:last-child::after { display: none; }
+
+.taxoflow-settings .taxoflow-orphan-group {
+  margin: 0;
+  padding: var(--size-4-2) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.taxoflow-settings .taxoflow-orphan-group + .taxoflow-orphan-group { border-top: 1px solid var(--background-modifier-border); }
+.taxoflow-settings .taxoflow-orphan-group-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--size-2-2); padding-block: var(--size-2-2); }
+.taxoflow-settings .taxoflow-orphan-group-toggle { border: 0; padding: var(--size-2-2); background: transparent; color: var(--text-normal); font: inherit; font-weight: var(--font-medium, 500); cursor: pointer; text-align: start; }
+.taxoflow-settings .taxoflow-orphan-group-actions { display: flex; flex-wrap: wrap; gap: var(--size-2-2); }
+.taxoflow-settings .taxoflow-orphan-group-body { padding-inline: var(--size-2-2); }
+.taxoflow-settings .taxoflow-orphan-group-actions .mod-warning { color: var(--text-error); }
+.taxoflow-settings .taxoflow-selector-instance-status { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+
+.taxoflow-settings .taxoflow-properties-list {
+  margin-block: var(--size-2-2);
+  border: 0;
+  background: transparent;
+}
+.taxoflow-settings .taxoflow-selector-card {
+  margin: 0;
+  padding: var(--size-4-2) 0;
+  border: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  background: transparent;
+}
+.taxoflow-settings .taxoflow-selector-card:last-child { border-bottom: 0; }
+.taxoflow-settings .taxoflow-selector-card > .setting-item-heading {
+  margin: 0;
+  padding-block: var(--size-2-2);
+  padding-inline: 0;
+  border-bottom: 0;
+}
+.taxoflow-settings .taxoflow-selector-details {
+  padding: var(--size-4-2) var(--size-4-3);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.taxoflow-modal-drag-handle { cursor: grab; user-select: none; touch-action: none; }
+.taxoflow-modal-drag-handle.is-dragging { cursor: grabbing; }
+
+.taxoflow-rules-list { display: grid; gap: var(--size-4-2); }
+.taxoflow-rule-card { border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); background: var(--background-primary); padding: var(--size-4-3); }
+.taxoflow-rule-card-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--size-4-2); }
+.taxoflow-rule-card-summary { min-width: 0; flex: 1 1 15rem; }
+.taxoflow-rule-card-summary > strong { margin-inline-end: var(--size-2-2); }
+.taxoflow-rule-logic-badge { display: inline-block; padding: 0.1em 0.55em; border-radius: var(--radius-s); background: var(--background-secondary); color: var(--text-muted); font-size: var(--font-ui-smaller); font-weight: var(--font-medium, 500); }
+.taxoflow-rule-logic-badge.is-or { color: var(--text-accent); }
+.taxoflow-rule-card-condition-summary, .taxoflow-rule-card-options-summary { margin-top: var(--size-2-2); color: var(--text-muted); font-size: var(--font-ui-small); overflow-wrap: anywhere; }
+.taxoflow-rule-card-actions { display: flex; flex-wrap: wrap; gap: var(--size-2-2); }
+.taxoflow-rule-card-details { margin-top: var(--size-4-3); padding-top: var(--size-4-3); border-top: 1px solid var(--background-modifier-border); }
+.taxoflow-rule-parent-details { margin-block: var(--size-4-3); padding: var(--size-4-2); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); }
+.taxoflow-rule-parent-details > summary { cursor: pointer; color: var(--text-normal); font-weight: var(--font-medium, 500); }
+.taxoflow-rule-parent-details .taxoflow-rule-parent-list { margin-bottom: 0; }
+.taxoflow-modal .taxoflow-rule-card .setting-item { padding-block: var(--size-2-2); }
+
+.menu-item-title.taxoflow-menu-label { position: relative; color: transparent !important; }
+.menu-item-title.taxoflow-menu-label::after {
+  content: attr(data-taxoflow-label);
+  position: absolute; inset-inline-start: 0; inset-block-start: 0;
+  color: var(--text-normal); font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%; pointer-events: none;
+}
+.taxoflow-open-plugin-settings-menu-item { border-top: 1px solid var(--background-modifier-border); margin-top: var(--size-2-2); padding-top: var(--size-2-2); }
+.menu .menu-item.taxoflow-open-plugin-settings-menu-item:hover,
+.menu .menu-item.taxoflow-open-plugin-settings-menu-item.is-selected,
+.menu .menu-item.taxoflow-open-plugin-settings-menu-item.selected,
+.menu .menu-item.taxoflow-open-plugin-settings-menu-item:focus-visible {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.suggestion-container.taxoflow-property-dropdown {
+  background-color: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--input-radius, var(--radius-s));
+  padding: var(--size-2-1);
+  box-shadow: var(--shadow-s);
+}
+
+.suggestion-container.taxoflow-property-dropdown .suggestion-item {
+  font-family: var(--font-text);
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  padding: var(--size-2-2) var(--size-4-2);
+  border-radius: var(--radius-s);
+  display: flex;
+  align-items: center;
+  min-height: 0;
+}
+
+.suggestion-container.taxoflow-property-dropdown .suggestion-item.is-selected {
+  background-color: var(--background-modifier-hover);
+}
+
+.suggestion-container.taxoflow-property-dropdown .suggestion-content {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

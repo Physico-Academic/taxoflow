@@ -1,0 +1,24 @@
+{
+  "name": "taxoflow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Profile-based taxonomies and context-dependent property suggestions for Obsidian.",
+  "license": "MIT",
+  "author": "AlPhysico",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Physico-Academic/taxoflow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Physico-Academic/taxoflow/issues"
+  },
+  "homepage": "https://github.com/Physico-Academic/taxoflow#readme",
+  "scripts": {
+    "test": "node tests/plugin.test.cjs && python -m unittest discover -s tests -p 'test_*.py'",
+    "check:syntax": "node --check main.js",
+    "check:release": "python tools/validate_release.py"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

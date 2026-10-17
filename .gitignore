@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+Thumbs.db
+.obsidian/
+.vault/
+.venv/
+__pycache__/
+*.py[cod]
+.taxoflow-conversion-backups/
+coverage/
+dist/
