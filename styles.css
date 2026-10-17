@@ -151,21 +151,17 @@
 .metadata-property-key[data-taxoflow-label],
 .taxoflow-property-key-label-host[data-taxoflow-label] {
   position: relative;
-  text-decoration: none !important;
 }
 
 .metadata-property[data-taxoflow-label] .metadata-property-key-input:not(:focus) {
-  color: transparent !important;
-  caret-color: transparent !important;
-  text-decoration: none !important;
-  text-decoration-line: none !important;
+  color: transparent;
+  caret-color: transparent;
 }
 
 .metadata-property-key[data-taxoflow-label]::after,
 .taxoflow-property-key-label-host[data-taxoflow-label]::after {
   content: attr(data-taxoflow-label);
   position: absolute;
-
   inset-inline-start: calc(var(--size-4-4, 16px) + var(--size-2-2, 4px) + 10px);
   inset-block-start: calc(50%);
   transform: translateY(-50%);
@@ -175,8 +171,6 @@
   font-weight: var(--font-normal, 400);
   letter-spacing: normal;
   line-height: normal;
-  text-decoration: none !important;
-  text-decoration-line: none !important;
   text-shadow: none;
   white-space: nowrap;
   overflow: hidden;
@@ -186,9 +180,7 @@
 }
 
 .metadata-property-key.taxoflow-key-editing::after,
-.taxoflow-property-key-label-host.taxoflow-key-editing::after,
-.metadata-property-key:has(.metadata-property-key-input:focus)::after,
-.taxoflow-property-key-label-host:has(.metadata-property-key-input:focus)::after {
+.taxoflow-property-key-label-host.taxoflow-key-editing::after {
   display: none;
 }
 
@@ -301,7 +293,7 @@
 
 .taxoflow-registration-modal { max-width: min(34rem, calc(100vw - 2rem)); }
 .metadata-property-value[data-taxoflow-optimistic-display] { position: relative; }
-.metadata-property-value[data-taxoflow-optimistic-display] > * { visibility: hidden !important; }
+.metadata-property-value[data-taxoflow-optimistic-display] > * { visibility: hidden; }
 .metadata-property-value[data-taxoflow-optimistic-display]::after { content: attr(data-taxoflow-optimistic-display); display: block; color: var(--text-normal); min-height: 1em; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; }
 
 .taxoflow-orphans-section .taxoflow-orphans-list .setting-item { align-items: center; gap: var(--size-4-2); }
@@ -425,7 +417,7 @@
 .taxoflow-settings .taxoflow-orphans-body[hidden],
 .taxoflow-settings .taxoflow-maintenance-body[hidden],
 .taxoflow-settings .taxoflow-orphan-group-body[hidden],
-.taxoflow-settings .taxoflow-rule-card-details[hidden] { display: none !important; }
+.taxoflow-settings .taxoflow-rule-card-details[hidden] { display: none; }
 
 .taxoflow-settings .taxoflow-maintenance-section { margin-block-end: 0; border-bottom: 0; }
 
@@ -443,10 +435,10 @@
   position: relative;
   margin: 0;
   padding: var(--size-4-3) 0;
-  border: 0 !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .taxoflow-settings .taxoflow-active-profile-details > .setting-item::after,
@@ -526,7 +518,7 @@
 .taxoflow-rule-parent-details .taxoflow-rule-parent-list { margin-bottom: 0; }
 .taxoflow-modal .taxoflow-rule-card .setting-item { padding-block: var(--size-2-2); }
 
-.menu-item-title.taxoflow-menu-label { position: relative; color: transparent !important; }
+.menu-item-title.taxoflow-menu-label { position: relative; color: transparent; }
 .menu-item-title.taxoflow-menu-label::after {
   content: attr(data-taxoflow-label);
   position: absolute; inset-inline-start: 0; inset-block-start: 0;
