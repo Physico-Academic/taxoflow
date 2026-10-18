@@ -100,7 +100,7 @@ function isFileInExcludedFolder(file, excludedFolders) {
     const parentPath = normalizeFolderPath(file.parent.path);
     return excludedFolders.some(folder => {
         const excluded = normalizeFolderPath(folder);
-        if (!excluded) return false; // Safety guard to prevent empty strings from excluding the root vault
+        if (!excluded) return false;
         return parentPath === excluded || parentPath.startsWith(`${excluded}/`);
     });
 }
@@ -194,7 +194,6 @@ function normalizeProfile(raw) {
         selectors,
         propertyLabels: labels,
         defaultFolder: String(raw?.defaultFolder || "").trim(),
-        // NEW: Load excluded folders safely
         excludedFolders: Array.isArray(raw?.excludedFolders) ? raw.excludedFolders.map(f => normalizeFolderPath(f)).filter(Boolean) : [],
     };
     }
