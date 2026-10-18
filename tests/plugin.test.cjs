@@ -43,7 +43,7 @@ const api = moduleObject.exports.__test;
 
 const suiteTests = [
   ['uses the TaxoFlow root prefix', () => assert.equal(api.TAXOFLOW_PROPERTY_PREFIX, 'taxo.')],
-  ['fresh settings have no profile', () => assert.deepEqual(api.DEFAULT_SETTINGS, { profiles: [], activeProfileId: '', suppressedAutoRegistrationKeys: [] })],
+  ['fresh settings have no profile', () => assert.deepEqual(api.DEFAULT_SETTINGS, { profiles: [], activeProfileId: '', suppressedAutoRegistrationKeys: [], universalExcludedFolders: [] })],
   ['strips only the current property prefix', () => {
     assert.equal(api.stripPropertyRootPrefix('taxo.book_genre'), 'book_genre');
     assert.equal(api.stripPropertyRootPrefix('selector.book_genre'), 'selector.book_genre');
@@ -84,9 +84,9 @@ const suiteTests = [
     assert.deepEqual(profile.propertyLabels, {});
   }],
   ['normalizes clean schema-v4 settings', () => {
-    const result = api.normalizeSavedSettings({ schemaVersion: 4, activeProfileId: '', profiles: [], suppressedAutoRegistrationKeys: [] });
-    assert.deepEqual(result.settings, { profiles: [], activeProfileId: '', suppressedAutoRegistrationKeys: [] });
-    assert.equal(result.unsupportedFlatSchema, false);
+  const result = api.normalizeSavedSettings({ schemaVersion: 4, activeProfileId: '', profiles: [], suppressedAutoRegistrationKeys: [] });
+  assert.deepEqual(result.settings, { profiles: [], activeProfileId: '', suppressedAutoRegistrationKeys: [], universalExcludedFolders: [] });
+  assert.equal(result.unsupportedFlatSchema, false);
   }],
   ['normalizes profile defaultFolder', () => {
     const profile = api.normalizeProfile({ id: 'book', name: 'Books', namespace: 'taxo.book_', defaultFolder: '  Notes/Books/  ' });
