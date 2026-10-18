@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const obsidian_1 = require("obsidian");
 
 const TAXOFLOW_PROPERTY_PREFIX = "taxo.";
-const DEFAULT_SETTINGS = { profiles: [], activeProfileId: "", suppressedAutoRegistrationKeys: [] };
+const DEFAULT_SETTINGS = { profiles: [], activeProfileId: "", suppressedAutoRegistrationKeys: [], universalExcludedFolders: [] };
 function stripPropertyRootPrefix(value) {
     const text = String(value || "");
     return text.startsWith(TAXOFLOW_PROPERTY_PREFIX) ? text.slice(TAXOFLOW_PROPERTY_PREFIX.length) : text;
@@ -95,10 +95,12 @@ function matchingProfilesForPropertyKey(key, profiles) {
 function normalizeFolderPath(path) {
     return String(path || "").trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
 }
-function isFileInExcludedFolder(file, excludedFolders) {
-    if (!excludedFolders || !Array.isArray(excludedFolders) || !excludedFolders.length || !file || !file.parent) return false;
+function isFileInExcludedFolder(file, profileExcluded, universalExcluded = []) {
+    if (!file || !file.parent) return false;
+    const combined = uniqueStrings([...(profileExcluded || []), ...(universalExcluded || [])]);
+    if (!combined.length) return false;
     const parentPath = normalizeFolderPath(file.parent.path);
-    return excludedFolders.some(folder => {
+    return combined.some(folder => {
         const excluded = normalizeFolderPath(folder);
         if (!excluded) return false;
         return parentPath === excluded || parentPath.startsWith(`${excluded}/`);
@@ -222,8 +224,9 @@ function normalizeSavedSettings(saved) {
         : (profiles[0]?.id || "");
     const suppressedAutoRegistrationKeys = uniqueStrings(saved?.suppressedAutoRegistrationKeys)
         .filter(key => key.startsWith(TAXOFLOW_PROPERTY_PREFIX));
+    const universalExcludedFolders = Array.isArray(saved?.universalExcludedFolders) ? saved.universalExcludedFolders.map(f => normalizeFolderPath(f)).filter(Boolean) : [];
     return {
-        settings: { profiles, activeProfileId, suppressedAutoRegistrationKeys },
+        settings: { profiles, activeProfileId, suppressedAutoRegistrationKeys, universalExcludedFolders },
         migrated: migrated && !unsupportedFlatSchema,
         unsupportedFlatSchema,
     };
@@ -1161,9 +1164,10 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
                 moveNotesBtn = b;
                 b.setButtonText("Move existing notes to folder…").setTooltip("Scan vault and move existing notes that contain this profile's properties to the default folder").setDisabled(!active.defaultFolder).onClick(() => this.moveExistingNotesForProfile(active));
             });
+            const allExcluded = uniqueStrings([...(active.excludedFolders || []), ...(this.plugin.settings.universalExcludedFolders || [])]);
             new obsidian_1.Setting(profileDetails)
                 .setName("Excluded folders")
-                .setDesc(active.excludedFolders?.length ? `Excluded: ${active.excludedFolders.join(", ")}` : "Notes in specific folders will bypass auto-routing.")
+                .setDesc(allExcluded.length ? `Excluded: ${allExcluded.join(", ")}` : "Notes in specific folders will bypass auto-routing.")
                 .addButton(b => b.setButtonText("Manage excluded folders…").onClick(() => {
                     new TaxoExcludeFoldersModal(this.app, this.plugin, active, () => this.display()).open();
                 }));
@@ -1642,13 +1646,13 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         const conflict = [];
         let alreadyInPlace = 0;
         for (const file of files) {
-            if (isFileInExcludedFolder(file, profile.excludedFolders)) continue;
+            if (isFileInExcludedFolder(file, profile.excludedFolders, this.plugin.settings.universalExcludedFolders)) continue;
             
             const keys = await this.plugin.getNoteFrontmatterKeys(file);
             if (!keys.size) continue;
             const matchingProfiles = getMatchingProfilesForFrontmatterKeys(keys, this.plugin.settings.profiles || []);
             
-            const validProfiles = matchingProfiles.filter(p => !isFileInExcludedFolder(file, p.excludedFolders));
+            const validProfiles = matchingProfiles.filter(p => !isFileInExcludedFolder(file, p.excludedFolders, this.plugin.settings.universalExcludedFolders));
             
             if (!validProfiles.some(p => p.id === profile.id)) continue;
             const resolution = resolveTargetFolderForProfiles(validProfiles);
@@ -1983,7 +1987,15 @@ class TaxoExcludeFoldersModal extends TaxoModal {
         this.plugin = plugin;
         this.profile = profile;
         this.onDone = onDone;
-        this.folders = [...(profile.excludedFolders || [])];
+        
+        const specific = profile.excludedFolders || [];
+        const universal = plugin.settings.universalExcludedFolders || [];
+        const map = new Map();
+        
+        for (const f of specific) map.set(f, false);
+        for (const f of universal) map.set(f, true);
+        
+        this.items = Array.from(map.entries()).map(([path, isUniversal]) => ({ path, isUniversal }));
     }
     onOpen() {
         super.onOpen();
@@ -1994,35 +2006,65 @@ class TaxoExcludeFoldersModal extends TaxoModal {
         this.contentEl.addClass("taxoflow-modal");
         
         const heading = this.contentEl.createEl("h2", { text: "Excluded folders", cls: "taxoflow-modal-drag-handle" });
-        this.contentEl.createEl("p", { text: "Notes located in these folders (or their nested subfolders) will never be automatically moved by this profile's auto-routing feature.", cls: "setting-item-description" });
+        this.contentEl.createEl("p", { text: "Notes located in these folders (or their nested subfolders) will bypass auto-routing. You can exclude them for this profile only, or universally across all profiles.", cls: "setting-item-description" });
         
         const list = this.contentEl.createDiv({ cls: "taxoflow-rule-parent-list" });
         list.style.display = "flex";
         list.style.flexDirection = "column";
         
-        if (this.folders.length === 0) {
+        if (this.items.length === 0) {
             list.createEl("p", { text: "No folders are currently excluded.", cls: "setting-item-description" });
         } else {
-            for (let i = 0; i < this.folders.length; i++) {
-                const setting = new obsidian_1.Setting(list).addText(t => t.setValue(this.folders[i]).setPlaceholder("e.g. System/Templates").onChange(val => this.folders[i] = val));
+            for (let i = 0; i < this.items.length; i++) {
+                const item = this.items[i];
+                const setting = new obsidian_1.Setting(list).addText(t => t.setValue(item.path).setPlaceholder("e.g. System/Templates").onChange(val => item.path = val));
+                
+                setting.addToggle(toggle => {
+                    toggle.setValue(item.isUniversal)
+                        .setTooltip(item.isUniversal ? "Universal (applies to all profiles)" : "Profile specific")
+                        .onChange(val => {
+                            item.isUniversal = val;
+                            toggle.setTooltip(val ? "Universal (applies to all profiles)" : "Profile specific");
+                        });
+                });
+
                 setting.addButton(b => b.setIcon("trash-2").setTooltip("Remove folder").onClick(() => {
-                    this.folders.splice(i, 1);
+                    this.items.splice(i, 1);
                     this.render();
                 }));
                 setting.settingEl.style.border = "none";
                 setting.settingEl.style.padding = "0";
+                setting.settingEl.style.gap = "8px";
             }
         }
         
         new obsidian_1.Setting(this.contentEl).addButton(b => b.setButtonText("Add folder path").onClick(() => {
-            this.folders.push("");
+            this.items.push({ path: "", isUniversal: false });
             this.render();
         }));
         
         const buttons = this.contentEl.createDiv({ cls: "modal-button-container" });
         new obsidian_1.ButtonComponent(buttons).setButtonText("Cancel").onClick(() => this.close());
         new obsidian_1.ButtonComponent(buttons).setButtonText("Save").setCta().onClick(async () => {
-            this.profile.excludedFolders = uniqueStrings(this.folders.map(f => normalizeFolderPath(f)).filter(Boolean));
+            const newSpecific = [];
+            const newUniversal = [];
+            
+            for (const item of this.items) {
+                const clean = normalizeFolderPath(item.path);
+                if (!clean) continue;
+                if (item.isUniversal) newUniversal.push(clean);
+                else newSpecific.push(clean);
+            }
+            
+            this.profile.excludedFolders = uniqueStrings(newSpecific);
+            this.plugin.settings.universalExcludedFolders = uniqueStrings(newUniversal);
+            
+            for (const p of this.plugin.settings.profiles) {
+                if (p !== this.profile) {
+                    p.excludedFolders = (p.excludedFolders || []).filter(f => !newUniversal.includes(f));
+                }
+            }
+            
             try {
                 await this.plugin.saveSettings();
                 this.close();
@@ -2839,20 +2881,22 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             new obsidian_1.Notice(`TaxoFlow: Cannot move "${file.name}" to "${cleanFolder}/" because a file with that name already exists.`);
             return { success: false, reason: "collision" };
         }
-        moving.add(file.path);
+        
+        const originalPath = file.path;
+        moving.add(originalPath);
+        
         try {
             await this.app.fileManager.renameFile(file, targetPath);
-            
             this.expandFolderInExplorer(cleanFolder);
-            
             return { success: true, targetPath };
         } catch (error) {
-            console.error("TaxoFlow Properties: could not move note to folder", file.path, targetPath, error);
+            console.error("TaxoFlow Properties: could not move note to folder", originalPath, targetPath, error);
             new obsidian_1.Notice(`TaxoFlow: Failed to move "${file.name}" to "${cleanFolder}/": ${error?.message || error}`);
             return { success: false, error };
         } finally {
+            moving.delete(originalPath);
             moving.delete(file.path);
-            if (file.path !== targetPath) moving.delete(targetPath);
+            moving.delete(targetPath);
         }
     }
     async handleAutoFolderForFile(file) {
@@ -2864,7 +2908,7 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
 
         const matchingProfiles = getMatchingProfilesForFrontmatterKeys(keys, this.settings.profiles || []);
         
-        const validProfiles = matchingProfiles.filter(p => !isFileInExcludedFolder(file, p.excludedFolders));
+        const validProfiles = matchingProfiles.filter(p => !isFileInExcludedFolder(file, p.excludedFolders, this.settings.universalExcludedFolders));
         if (!validProfiles.length) return;
 
         const resolution = resolveTargetFolderForProfiles(validProfiles);
@@ -3617,6 +3661,7 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             schemaVersion: 4,
             activeProfileId: this.settings.activeProfileId,
             suppressedAutoRegistrationKeys: uniqueStrings(this.settings.suppressedAutoRegistrationKeys || []),
+            universalExcludedFolders: uniqueStrings(this.settings.universalExcludedFolders || []),
             profiles: this.settings.profiles.map(profile => ({
                 id: profile.id, name: profile.name, namespace: profile.namespace,
                 selectors: profile.selectors.map(s => ({ name: s.name, label: s.label || "", options: parseOptionList(s.options), defaultValue: typeof s.defaultValue === "string" ? s.defaultValue : "", dependsOn: normalizeDependsOn(s.dependsOn), rules: normalizeRules(s.rules), customOptionsByContext: normalizeCustomContexts(s.customOptionsByContext) })),
@@ -4202,3 +4247,5 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
     }
 }
 exports.default = TaxoFlowPlugin;
+
+/* nosourcemap */
