@@ -1668,26 +1668,20 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
             new obsidian_1.Notice(`All matching notes are already in "${targetFolder}/".`);
             return;
         }
-        new TaxoMoveExistingNotesConfirmModal(this.app, this.plugin, profile, nonConflict, conflict, async () => {
+        new TaxoMoveExistingNotesConfirmModal(this.app, this.plugin, profile, nonConflict, conflict, async (itemsToMove) => {
             let movedCount = 0;
             let skippedCollisions = 0;
-            for (const file of nonConflict) {
-                const res = await this.plugin.moveNoteToFolder(file, targetFolder);
+            
+            for (const item of itemsToMove) {
+                const res = await this.plugin.moveNoteToFolder(item.file, item.targetFolder);
                 if (res.success && !res.alreadyThere) movedCount++;
                 else if (res.reason === "collision") skippedCollisions++;
             }
-            let msg = `Moved ${movedCount} note(s) to "${targetFolder}/".`;
+            
+            let msg = `Moved ${movedCount} note(s).`;
             if (skippedCollisions > 0) msg += ` (${skippedCollisions} note(s) skipped due to name collisions)`;
             new obsidian_1.Notice(msg);
-            for (const item of conflict) {
-                await new Promise(resolve => {
-                    const modal = new TaxoFolderConflictModal(this.app, this.plugin, item.file, item.resolution.profiles, async chosenFolder => {
-                        if (chosenFolder) await this.plugin.moveNoteToFolder(item.file, chosenFolder);
-                        resolve();
-                    });
-                    modal.open();
-                });
-            }
+            
         }).open();
     }
 }
@@ -2085,46 +2079,202 @@ class TaxoExcludeFoldersModal extends TaxoModal {
 
 class TaxoMoveExistingNotesConfirmModal extends TaxoModal {
     constructor(app, plugin, profile, nonConflictFiles, conflictFiles, onProceed) {
-        const folder = normalizeFolderPath(profile.defaultFolder);
-        super(app, "Move existing notes to folder", `Scan results for profile "${profile.name}":`);
+        super(app, "Move existing notes to folder", `Scan results for profile "${profile.name}"`);
         this.plugin = plugin;
         this.profile = profile;
-        this.folder = folder;
-        this.nonConflictFiles = nonConflictFiles;
-        this.conflictFiles = conflictFiles;
         this.onProceed = onProceed;
+        this.targetFolder = normalizeFolderPath(profile.defaultFolder);
+
+        this.items = [];
+        
+        for (const item of conflictFiles) {
+            this.items.push({
+                file: item.file,
+                status: "conflict",
+                availableProfiles: item.resolution.profiles,
+                targetFolder: null,
+                selected: false, 
+                visible: true
+            });
+        }
+        for (const file of nonConflictFiles) {
+            this.items.push({
+                file: file,
+                status: "single",
+                targetFolder: this.targetFolder,
+                selected: true,
+                visible: true
+            });
+        }
+        this.searchQuery = "";
     }
+
     onOpen() {
         super.onOpen();
-        const { contentEl } = this;
-        const details = contentEl.createDiv({ cls: "taxoflow-confirm-details" });
-        details.style.margin = "var(--size-4-3) 0";
+        this.render();
+    }
 
-        const p1 = details.createEl("p");
-        p1.createEl("strong", { text: "Target folder: " });
-        p1.createSpan({ text: `${this.folder}/` });
+    render() {
+        this.contentEl.empty();
+        this.contentEl.addClass("taxoflow-modal");
+        
+        const heading = this.contentEl.createEl("h2", { text: "Move existing notes to folder", cls: "taxoflow-modal-drag-handle" });
+        this.contentEl.createEl("p", { text: `Scan results for profile "${this.profile.name}". Select the notes you want to move.`, cls: "setting-item-description" });
 
-        const p2 = details.createEl("p");
-        p2.createEl("strong", { text: "Notes to move: " });
-        p2.createSpan({ text: `${this.nonConflictFiles.length}` });
+        const searchSetting = new obsidian_1.Setting(this.contentEl).addSearch(search => {
+            search.setPlaceholder("Search notes by path...").setValue(this.searchQuery).onChange(val => {
+                this.searchQuery = val.trim().toLocaleLowerCase();
+                this.filterItems();
+                this.renderList();
+            });
+        });
+        searchSetting.settingEl.style.border = "none";
+        searchSetting.settingEl.style.padding = "0 0 12px 0";
 
-        if (this.conflictFiles.length > 0) {
-            const p3 = details.createEl("p", { cls: "setting-item-description" });
-            p3.createEl("strong", { text: "Notes with multiple default folders: " });
-            p3.createSpan({ text: `${this.conflictFiles.length} (you will be prompted for each conflict)` });
+        this.bulkToggleContainer = this.contentEl.createDiv({ cls: "taxoflow-bulk-toggle" });
+        this.bulkToggleContainer.style.display = "flex";
+        this.bulkToggleContainer.style.alignItems = "center";
+        this.bulkToggleContainer.style.gap = "8px";
+        this.bulkToggleContainer.style.padding = "0 0 8px 4px";
+        this.bulkToggleContainer.style.borderBottom = "1px solid var(--background-modifier-border)";
+
+        this.bulkToggleCheckbox = this.bulkToggleContainer.createEl("input", { attr: { type: "checkbox" } });
+        this.bulkToggleLabel = this.bulkToggleContainer.createEl("span", { text: "Select all visible" });
+        
+        this.bulkToggleCheckbox.addEventListener("change", (e) => {
+            const checked = e.target.checked;
+            for (const item of this.items) {
+                if (item.visible) {
+                    if (item.status === "single" || item.targetFolder !== null) {
+                        item.selected = checked;
+                    }
+                }
+            }
+            this.renderList();
+        });
+
+        this.listContainer = this.contentEl.createDiv({ cls: "taxoflow-delete-note-list" });
+        this.listContainer.style.maxHeight = "40vh";
+        this.listContainer.style.marginTop = "8px";
+
+        this.buttons = this.contentEl.createDiv({ cls: "modal-button-container" });
+        
+        this.renderList();
+        this.installModalDrag(heading);
+    }
+
+    filterItems() {
+        for (const item of this.items) {
+            if (!this.searchQuery) {
+                item.visible = true;
+            } else {
+                item.visible = item.file.path.toLocaleLowerCase().includes(this.searchQuery);
+            }
+        }
+    }
+
+    renderList() {
+        this.listContainer.empty();
+        let visibleCount = 0;
+        let selectedVisibleCount = 0;
+        let selectableVisible = 0;
+
+        for (const item of this.items) {
+            if (!item.visible) continue;
+            
+            visibleCount++;
+            const canSelect = item.status === "single" || item.targetFolder !== null;
+            if (canSelect) selectableVisible++;
+            if (item.selected && item.visible) selectedVisibleCount++;
+
+            const row = this.listContainer.createDiv({ cls: "taxoflow-delete-note-row" });
+            row.style.display = "flex";
+            row.style.alignItems = "center";
+            row.style.gap = "12px";
+
+            const checkbox = row.createEl("input", { attr: { type: "checkbox" } });
+            checkbox.checked = item.selected;
+            checkbox.disabled = !canSelect;
+
+            const info = row.createDiv();
+            info.style.flex = "1";
+            info.style.minWidth = "0"; 
+            
+            info.createEl("div", { text: item.file.path, attr: { style: "word-break: break-all; font-weight: 500;" } });
+            
+            if (item.status === "single") {
+                info.createEl("div", { text: `Target: ${item.targetFolder}/`, cls: "setting-item-description" });
+            } else {
+                const resolveContainer = info.createDiv();
+                resolveContainer.style.marginTop = "6px";
+                resolveContainer.createEl("span", { text: "Conflict: ", attr: { style: "color: var(--text-error); font-size: var(--font-ui-smaller);" } });
+                
+                const select = resolveContainer.createEl("select", { cls: "dropdown" });
+                select.style.fontSize = "var(--font-ui-smaller)";
+                select.createEl("option", { value: "", text: "Choose a folder to resolve..." });
+                
+                for (const p of item.availableProfiles) {
+                    const folder = normalizeFolderPath(p.defaultFolder);
+                    const opt = select.createEl("option", { value: folder, text: `${folder}/ (${p.name})` });
+                    if (item.targetFolder === folder) opt.selected = true;
+                }
+
+                select.addEventListener("change", (e) => {
+                    item.targetFolder = e.target.value || null;
+                    if (item.targetFolder) {
+                        item.selected = true;
+                    } else {
+                        item.selected = false;
+                    }
+                    this.renderList();
+                });
+            }
+
+            checkbox.addEventListener("change", (e) => {
+                item.selected = e.target.checked;
+                this.updateFooter();
+            });
         }
 
-        const buttons = contentEl.createDiv({ cls: "modal-button-container" });
-        new obsidian_1.ButtonComponent(buttons).setButtonText("Cancel").onClick(() => this.close());
-        new obsidian_1.ButtonComponent(buttons)
-            .setButtonText(this.nonConflictFiles.length > 0 ? `Move ${this.nonConflictFiles.length} note(s)` : "Review conflicts")
+        if (visibleCount === 0) {
+            this.listContainer.createEl("div", { text: "No notes match your search.", cls: "setting-item-description", attr: { style: "padding: 16px;" } });
+        }
+
+        if (selectableVisible > 0) {
+            this.bulkToggleCheckbox.disabled = false;
+            this.bulkToggleCheckbox.checked = (selectedVisibleCount === selectableVisible);
+            this.bulkToggleCheckbox.indeterminate = (selectedVisibleCount > 0 && selectedVisibleCount < selectableVisible);
+        } else {
+            this.bulkToggleCheckbox.disabled = true;
+            this.bulkToggleCheckbox.checked = false;
+            this.bulkToggleCheckbox.indeterminate = false;
+        }
+
+        this.updateFooter();
+    }
+
+    updateFooter() {
+        this.buttons.empty();
+        let totalSelected = 0;
+        
+        for (const item of this.items) {
+            if (item.selected) totalSelected++;
+        }
+
+        new obsidian_1.ButtonComponent(this.buttons).setButtonText("Cancel").onClick(() => this.close());
+        
+        const cta = new obsidian_1.ButtonComponent(this.buttons)
+            .setButtonText(totalSelected > 0 ? `Move ${totalSelected} note(s)` : "Move notes")
             .setCta()
             .onClick(async () => {
                 this.close();
                 if (typeof this.onProceed === "function") {
-                    await this.onProceed();
+                    const toMove = this.items.filter(i => i.selected && i.targetFolder);
+                    await this.onProceed(toMove);
                 }
             });
+            
+        cta.setDisabled(totalSelected === 0);
     }
 }
 
@@ -2286,6 +2436,9 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         this._movingFiles = new Set(); this._activeFolderConflictModals = new Set(); this._dismissedFolderConflicts = new Map();
     }
     async onload() {
+        this._isStartingUp = true;
+        window.setTimeout(() => { this._isStartingUp = false; }, 15000);
+
         await this.loadSettings();
         this.addSettingTab(new TaxoFlowSettingTab(this.app, this));
         this.observer = new MutationObserver(mutations => this.handleMutations(mutations));
@@ -2924,9 +3077,12 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         }
 
         if (resolution.status === "conflict") {
+            if (this._isStartingUp) return;
+
             const conflictKey = resolution.folders.slice().sort().join("::");
             const activeModals = this._activeFolderConflictModals || (this._activeFolderConflictModals = new Set());
             const dismissed = this._dismissedFolderConflicts || (this._dismissedFolderConflicts = new Map());
+            
             if (activeModals.has(file.path)) return;
             if (dismissed.get(file.path) === conflictKey) return;
 
