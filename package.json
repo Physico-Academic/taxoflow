@@ -1,6 +1,6 @@
 {
   "name": "taxoflow",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Profile-based taxonomies and context-dependent property suggestions for Obsidian.",
   "license": "MIT",
