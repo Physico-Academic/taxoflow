@@ -2597,7 +2597,7 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         return output;
     }
     expandFolderInExplorer(folderPath) {
-        const leaves = this.app.workspace.getLeavesOfType("file-explorer");
+        const leaves = this.app.workspace?.getLeavesOfType?.("file-explorer") || [];
         if (!leaves.length || !folderPath) return;
 
         const parts = folderPath.split("/").filter(Boolean);
