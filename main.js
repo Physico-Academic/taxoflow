@@ -1992,10 +1992,13 @@ class TaxoExcludeFoldersModal extends TaxoModal {
         const universal = plugin.settings.universalExcludedFolders || [];
         const map = new Map();
         
-        for (const f of specific) map.set(f, false);
-        for (const f of universal) map.set(f, true);
+        for (const f of specific) map.set(f, { path: f, isUniversal: false, isSpecific: true });
+        for (const f of universal) {
+            if (map.has(f)) map.get(f).isUniversal = true;
+            else map.set(f, { path: f, isUniversal: true, isSpecific: false });
+        }
         
-        this.items = Array.from(map.entries()).map(([path, isUniversal]) => ({ path, isUniversal }));
+        this.items = Array.from(map.values());
     }
     onOpen() {
         super.onOpen();
@@ -2024,8 +2027,16 @@ class TaxoExcludeFoldersModal extends TaxoModal {
                         .setTooltip(item.isUniversal ? "Universal (applies to all profiles)" : "Profile specific")
                         .onChange(val => {
                             item.isUniversal = val;
+                            if (!val && !item.isSpecific) item.isSpecific = true;
                             toggle.setTooltip(val ? "Universal (applies to all profiles)" : "Profile specific");
                         });
+                    
+                    const label = document.createElement("span");
+                    label.textContent = "Global";
+                    label.style.marginInline = "6px";
+                    label.style.color = "var(--text-muted)";
+                    label.style.fontSize = "var(--font-ui-small)";
+                    toggle.toggleEl.parentElement.insertBefore(label, toggle.toggleEl);
                 });
 
                 setting.addButton(b => b.setIcon("trash-2").setTooltip("Remove folder").onClick(() => {
@@ -2039,7 +2050,7 @@ class TaxoExcludeFoldersModal extends TaxoModal {
         }
         
         new obsidian_1.Setting(this.contentEl).addButton(b => b.setButtonText("Add folder path").onClick(() => {
-            this.items.push({ path: "", isUniversal: false });
+            this.items.push({ path: "", isUniversal: false, isSpecific: true });
             this.render();
         }));
         
@@ -2053,17 +2064,11 @@ class TaxoExcludeFoldersModal extends TaxoModal {
                 const clean = normalizeFolderPath(item.path);
                 if (!clean) continue;
                 if (item.isUniversal) newUniversal.push(clean);
-                else newSpecific.push(clean);
+                if (item.isSpecific) newSpecific.push(clean);
             }
             
             this.profile.excludedFolders = uniqueStrings(newSpecific);
             this.plugin.settings.universalExcludedFolders = uniqueStrings(newUniversal);
-            
-            for (const p of this.plugin.settings.profiles) {
-                if (p !== this.profile) {
-                    p.excludedFolders = (p.excludedFolders || []).filter(f => !newUniversal.includes(f));
-                }
-            }
             
             try {
                 await this.plugin.saveSettings();
