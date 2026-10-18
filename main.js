@@ -4247,5 +4247,3 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
     }
 }
 exports.default = TaxoFlowPlugin;
-
-/* nosourcemap */
