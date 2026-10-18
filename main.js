@@ -2596,6 +2596,30 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         await this.cleanupUnusedRegistrationSuppressions(new Set(occurrencesByKey.keys()), true);
         return output;
     }
+    expandFolderInExplorer(folderPath) {
+        const leaves = this.app.workspace.getLeavesOfType("file-explorer");
+        if (!leaves.length || !folderPath) return;
+
+        const parts = folderPath.split("/").filter(Boolean);
+        let currentPath = "";
+        
+        const pathsToExpand = parts.map(part => {
+            currentPath = currentPath ? `${currentPath}/${part}` : part;
+            return currentPath;
+        });
+
+        for (const leaf of leaves) {
+            const view = leaf.view;
+            if (!view?.fileItems) continue;
+
+            for (const path of pathsToExpand) {
+                const folderItem = view.fileItems[path];
+                if (folderItem && typeof folderItem.setCollapsed === "function") {
+                    folderItem.setCollapsed(false);
+                }
+            }
+        }
+    }
     getOrphanProperties() {
 
         const infos = this.getPropertyInfoMap();
@@ -2730,6 +2754,9 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         moving.add(file.path);
         try {
             await this.app.fileManager.renameFile(file, targetPath);
+            
+            this.expandFolderInExplorer(cleanFolder);
+            
             return { success: true, targetPath };
         } catch (error) {
             console.error("TaxoFlow Properties: could not move note to folder", file.path, targetPath, error);

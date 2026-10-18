@@ -1,7 +1,7 @@
 {
   "id": "taxoflow",
   "name": "TaxoFlow Properties",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "minAppVersion": "1.8.0",
   "description": "Manage profile-based taxonomies, context-dependent property options, display labels, defaults, and orphaned properties.",
   "author": "AlPhysico",
