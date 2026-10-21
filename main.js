@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const obsidian_1 = require("obsidian");
 
 const TAXOFLOW_PROPERTY_PREFIX = "taxo.";
-const DEFAULT_SETTINGS = { profiles: [], activeProfileId: "", suppressedAutoRegistrationKeys: [], universalExcludedFolders: [] };
+const DEFAULT_SETTINGS = { profiles: [], activeProfileId: "", suppressedAutoRegistrationKeys: [], universalExcludedFolders: [], propertySchemas: [], globalPropertyLabels: {} };
 function stripPropertyRootPrefix(value) {
     const text = String(value || "");
     return text.startsWith(TAXOFLOW_PROPERTY_PREFIX) ? text.slice(TAXOFLOW_PROPERTY_PREFIX.length) : text;
@@ -209,24 +209,46 @@ function normalizeProfile(raw) {
     };
 }
 function normalizeSavedSettings(saved) {
-
     const hasSavedSettings = Boolean(saved && typeof saved === "object");
     let migrated = hasSavedSettings && saved.schemaVersion !== 4;
     const unsupportedFlatSchema = !Array.isArray(saved?.profiles) && Array.isArray(saved?.selectors) && saved.selectors.length > 0;
     const savedProfiles = Array.isArray(saved?.profiles) ? saved.profiles : [];
+    
     if (savedProfiles.some(profile => (Array.isArray(profile?.selectors) ? profile.selectors : []).some(selector =>
         Object.prototype.hasOwnProperty.call(selector || {}, "defaultFirst") || !Object.prototype.hasOwnProperty.call(selector || {}, "defaultValue")
     ))) migrated = true;
 
-    const profiles = savedProfiles.map(profile => normalizeProfile(profile));
+    const globalPropertyLabels = saved?.globalPropertyLabels || {};
+
+    const profiles = savedProfiles.map(profile => {
+        const p = normalizeProfile(profile);
+        if (p.propertyLabels && Object.keys(p.propertyLabels).length > 0) {
+            for (const [k, v] of Object.entries(p.propertyLabels)) {
+                globalPropertyLabels[k] = v;
+            }
+            p.propertyLabels = {};
+            migrated = true;
+        }
+        return p;
+    });
+
     const activeProfileId = profiles.some(profile => profile.id === saved?.activeProfileId)
         ? saved.activeProfileId
         : (profiles[0]?.id || "");
     const suppressedAutoRegistrationKeys = uniqueStrings(saved?.suppressedAutoRegistrationKeys)
         .filter(key => key.startsWith(TAXOFLOW_PROPERTY_PREFIX));
     const universalExcludedFolders = Array.isArray(saved?.universalExcludedFolders) ? saved.universalExcludedFolders.map(f => normalizeFolderPath(f)).filter(Boolean) : [];
+    const propertySchemas = (Array.isArray(saved?.propertySchemas) ? saved.propertySchemas : []).map(schema => {
+        if (!schema.conditions && schema.triggerKey) {
+            schema.conditions = [{ key: schema.triggerKey, value: schema.triggerValue }];
+            schema.matchType = "ALL";
+            migrated = true;
+        }
+        return schema;
+    });
+    
     return {
-        settings: { profiles, activeProfileId, suppressedAutoRegistrationKeys, universalExcludedFolders },
+        settings: { profiles, activeProfileId, suppressedAutoRegistrationKeys, universalExcludedFolders, propertySchemas, globalPropertyLabels },
         migrated: migrated && !unsupportedFlatSchema,
         unsupportedFlatSchema,
     };
@@ -425,24 +447,42 @@ class TaxoOptionSuggest extends obsidian_1.AbstractInputSuggest {
         this.selectedValuesProvider = selectedValuesProvider; this.onChoose = onChoose; this.onCustomInput = onCustomInput; this.isContextReady = isContextReady;
         this.showAllUntilTyped = false; this.valueAtOpen = ""; this.disposed = false; this.ignoreNextBlur = false;
         this.pendingCustomValue = ""; this.hiddenSuggestionContainers = new Map(); this.limit = 100; this.lastKnownListMode = Boolean(this.listProperty());
+        this.userNavigated = false;
+
         this.handleKeydown = event => {
             if (event.isComposing) return;
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                this.userNavigated = true;
+            }
             if (event.key === "Enter") {
                 const typedValue = this.normalizeValue(this.readEditorValue());
                 if (!typedValue || typedValue === this.normalizeValue(this.valueAtOpen)) return;
+                
                 const available = this.optionsProvider() || [];
                 const exactMatch = available.find(option => this.normalizeValue(option).toLocaleLowerCase() === typedValue.toLocaleLowerCase());
+                
+                if (!this.userNavigated) {
+                    event.preventDefault(); event.stopImmediatePropagation(); this.ignoreNextBlur = true;
+                    this.showAllUntilTyped = false; this.close();
+                    if (exactMatch) this.onChoose(exactMatch);
+                    else this.dispatchCustomValue(typedValue);
+                    return;
+                }
+
                 if (exactMatch) {
                     event.preventDefault(); event.stopImmediatePropagation(); this.ignoreNextBlur = true; this.close(); this.onChoose(exactMatch); return;
                 }
+                if (this.getSuggestions(typedValue).length > 0) return;
 
-                if (this.getSuggestions(typedValue).length > 0) { event.preventDefault(); event.stopImmediatePropagation(); return; }
                 event.preventDefault(); event.stopImmediatePropagation(); this.ignoreNextBlur = true;
                 this.showAllUntilTyped = false; this.close(); this.dispatchCustomValue(typedValue); return;
             }
-            if (event.key.length === 1 || event.key === "Backspace" || event.key === "Delete") this.showAllUntilTyped = false;
+            if (event.key.length === 1 || event.key === "Backspace" || event.key === "Delete") {
+                this.showAllUntilTyped = false;
+                this.userNavigated = false;
+            }
         };
-        this.handlePaste = () => { this.showAllUntilTyped = false; };
+        this.handlePaste = () => { this.showAllUntilTyped = false; this.userNavigated = false; };
         this.handleInput = () => { window.setTimeout(() => this.hideCompetingSuggestionContainers(), 0); window.setTimeout(() => this.hideCompetingSuggestionContainers(), 40); };
         this.handleBlur = () => {
             window.setTimeout(() => this.restoreCompetingSuggestionContainers(), 0);
@@ -856,198 +896,301 @@ class TaxoRenameSelectorModal extends TaxoModal {
 class TaxoRuleBuilderModal extends TaxoModal {
     constructor(app, plugin, profile, selector, onSaved) {
         super(app, "Dependency rules", `${profile.name} · ${selector.name}`);
-        this.plugin = plugin; this.profile = profile; this.selector = selector; this.onSaved = onSaved;
-        this.dependencies = normalizeDependsOn(selector.dependsOn);
-        this.rules = (selector.rules || []).map(r => ({ when: Object.fromEntries(Object.entries(r.when || {}).map(([k, v]) => [k, parseOptionList(v)])), options: parseOptionList(r.options), logic: r.logic === "or" ? "or" : "and" }));
-        this.expandedRuleIndices = new Set();
-        this.parentsExpanded = true;
-        this.dirtyRuleIndex = -1;
+        this.plugin = plugin; 
+        this.profile = profile; 
+        this.selector = selector; 
+        this.onSaved = onSaved;
+        
+        this.rules = (selector.rules || []).map(r => ({
+            when: Object.entries(r.when || {}).map(([k, v]) => ({ key: k, values: parseOptionList(v) })),
+            options: parseOptionList(r.options),
+            logic: r.logic === "or" ? "or" : "and"
+        }));
+        
+        this.activeRuleIndex = null;
     }
-    onOpen() { super.onOpen(); this.render(); }
+
+    onOpen() {
+        super.onOpen();
+        this.modalEl.addClass("taxoflow-schema-editor-modal");
+        this.render();
+    }
+
     render() {
-        const { contentEl } = this; contentEl.empty(); contentEl.addClass("taxoflow-modal");
+        const { contentEl } = this;
+        const currentScroll = contentEl.scrollTop;
+        contentEl.empty();
+        contentEl.addClass("taxoflow-modal");
+        
         const heading = contentEl.createEl("h2", { text: "Dependency rules", cls: "taxoflow-modal-drag-handle" });
-        contentEl.createEl("p", { text: `${this.profile.name} · ${this.selector.name}`, cls: "setting-item-description" });
-        const parentsDetails = contentEl.createEl("details", { cls: "taxoflow-rule-parent-details" });
-        parentsDetails.open = this.parentsExpanded;
-        parentsDetails.addEventListener("toggle", () => { this.parentsExpanded = parentsDetails.open; });
-        parentsDetails.createEl("summary", { text: `Required parent properties (${this.dependencies.length} selected)` });
-        parentsDetails.createEl("p", { text: "For AND rules, every selected parent must have a value. For OR rules, at least one declared condition must match. Multiple values within one condition are alternatives.", cls: "setting-item-description" });
-        const parentList = parentsDetails.createDiv({ cls: "taxoflow-rule-parent-list" });
-        const possibleParents = this.profile.selectors.filter(s => s.name !== this.selector.name);
-        for (const parent of possibleParents) {
-            const row = parentList.createDiv({ cls: "taxoflow-rule-parent-row" });
-            const label = row.createEl("label", { cls: "taxoflow-rule-parent-label" });
-            const input = label.createEl("input", { attr: { type: "checkbox" } }); input.checked = this.dependencies.includes(parent.name);
-            label.createSpan({ text: `${parent.label || humanize(parent.name)} (${parent.name})` });
-            input.addEventListener("change", () => {
-                this.parentsExpanded = parentsDetails.open;
-                if (input.checked) { if (!this.dependencies.includes(parent.name)) this.dependencies.push(parent.name); }
-                else { this.dependencies = this.dependencies.filter(k => k !== parent.name); this.rules.forEach(r => { delete r.when[parent.name]; }); }
-                this.dirtyRuleIndex = -1; this.render();
-            });
+        contentEl.createEl("p", { text: `${this.profile.name} · ${this.selector.name}`, cls: "setting-item-description", style: "margin-bottom: 12px;" });
+
+        contentEl.createEl("h3", { text: "Configured Rules" });
+        const rulesContainer = contentEl.createDiv({ cls: "taxoflow-schema-table-container", style: "margin-bottom: 16px; padding: 12px;" });
+        
+        if (!this.rules.length) {
+            rulesContainer.createEl("p", { text: "No rules configured yet.", cls: "setting-item-description", style: "margin: 0;" });
         }
-        new obsidian_1.Setting(contentEl).setName("Rules").setDesc("The most-specific matching rule wins. Equally specific overlapping rules with different options must be resolved before saving.").setHeading();
-        const rulesList = contentEl.createDiv({ cls: "taxoflow-rules-list" });
-        const toolbar = contentEl.createDiv({ cls: "taxoflow-rule-toolbar" });
-        new obsidian_1.ButtonComponent(toolbar).setButtonText("Add rule").setCta().onClick(() => {
-            this.rules.push({ when: {}, options: [], logic: "and" });
-            this.expandedRuleIndices = new Set([this.rules.length - 1]);
-            this.dirtyRuleIndex = this.rules.length - 1;
-            this.render();
-        });
-        if (!this.rules.length) rulesList.createEl("p", { text: "No rules yet. Add a rule to define options for a dependency context.", cls: "setting-item-description" });
-        for (let index = 0; index < this.rules.length; index++) {
-            const rule = this.rules[index];
-            const expanded = this.expandedRuleIndices.has(index);
-            const card = rulesList.createDiv({ cls: `taxoflow-rule-card${expanded ? " is-expanded" : " is-collapsed"}` });
-            card.dataset.ruleIndex = String(index);
-            const cardHeader = card.createDiv({ cls: "taxoflow-rule-card-header" });
-            const summary = cardHeader.createDiv({ cls: "taxoflow-rule-card-summary" });
-            summary.createEl("strong", { text: `Rule ${index + 1}` });
-            summary.createEl("span", { cls: `taxoflow-rule-logic-badge is-${rule.logic}`, text: rule.logic.toLocaleUpperCase() });
-            summary.createEl("div", { cls: "taxoflow-rule-card-condition-summary", text: this.ruleLabel(rule, index) });
-            summary.createEl("div", { cls: "taxoflow-rule-card-options-summary", text: `Options: ${parseOptionList(rule.options).join(", ") || "Not defined"}` });
-            const actions = cardHeader.createDiv({ cls: "taxoflow-rule-card-actions" });
-            new obsidian_1.ButtonComponent(actions).setButtonText(expanded ? "Collapse" : "Edit").onClick(() => {
-                if (expanded) this.expandedRuleIndices.delete(index); else this.expandedRuleIndices.add(index);
+
+        for (let i = 0; i < this.rules.length; i++) {
+            const ruleSetting = new obsidian_1.Setting(rulesContainer)
+                .setName(`Rule ${i + 1}`)
+                .addToggle(toggle => {
+                    toggle.setValue(this.activeRuleIndex === i)
+                          .setTooltip(this.activeRuleIndex === i ? "Collapse rule editor" : "Expand rule editor")
+                          .onChange(val => {
+                              this.activeRuleIndex = val ? i : null;
+                              this.render();
+                          });
+                })
+                .addButton(btn => {
+                    btn.setIcon("trash-2")
+                       .setTooltip("Delete rule")
+                       .onClick(() => this.confirmDeleteRule(i));
+                });
+                
+            ruleSetting.settingEl.style.cursor = "pointer";
+            ruleSetting.settingEl.addEventListener("click", (e) => {
+                if(e.target.closest(".setting-item-control")) return;
+                this.activeRuleIndex = this.activeRuleIndex === i ? null : i;
                 this.render();
             });
-            new obsidian_1.ButtonComponent(actions).setButtonText("Duplicate").onClick(() => {
-                this.rules.splice(index + 1, 0, JSON.parse(JSON.stringify(rule)));
-                const shifted = new Set([...this.expandedRuleIndices].map(i => i > index ? i + 1 : i));
-                shifted.add(index + 1); this.expandedRuleIndices = shifted; this.dirtyRuleIndex = index + 1; this.render();
-            });
-            new obsidian_1.ButtonComponent(actions).setButtonText("Remove").setWarning().onClick(() => this.confirmDeleteRule(index));
-            const details = card.createDiv({ cls: "taxoflow-rule-card-details" });
-            details.hidden = !expanded;
-            new obsidian_1.Setting(details).setName("Condition logic").setDesc("AND requires every declared parent condition to match. OR requires at least one declared condition to match.").addDropdown(drop => {
-                drop.addOption("and", "AND — all conditions"); drop.addOption("or", "OR — any condition"); drop.setValue(rule.logic === "or" ? "or" : "and");
-                drop.onChange(value => { rule.logic = value === "or" ? "or" : "and"; this.dirtyRuleIndex = index; this.expandedRuleIndices.add(index); this.render(); });
-            });
-            const conditions = details.createDiv({ cls: "taxoflow-rule-conditions" });
-            conditions.createEl("h3", { text: "When these conditions match" });
-            if (!this.dependencies.length) conditions.createEl("p", { text: "Select at least one parent property above to make this selector dependent.", cls: "setting-item-description" });
-            for (const parentKey of this.dependencies) {
-                const parent = possibleParents.find(s => s.name === parentKey);
-                if (parent) this.renderParentValuePicker(conditions, parent, rule);
-            }
-            new obsidian_1.Setting(details).setName("Then offer these options").setDesc("Use commas or new lines. Quote labels containing commas, for example: \"New York, USA\".").setHeading();
-            new obsidian_1.Setting(details).setName("Available options").addTextArea(t => {
-                t.inputEl.rows = 4; t.inputEl.addClass("taxoflow-options-input");
-                t.setPlaceholder("Fantasy, Mystery, Science Fiction").setValue(parseOptionList(rule.options).join("\n"));
-                t.onChange(value => { rule.options = parseOptionList(value); this.dirtyRuleIndex = index; const el = card.querySelector(".taxoflow-rule-card-options-summary"); if (el) el.textContent = `Options: ${rule.options.join(", ") || "Not defined"}`; });
-            });
         }
-        this.validationEl = contentEl.createDiv({ cls: "taxoflow-rule-validation setting-item-description" });
-        const buttons = contentEl.createDiv({ cls: "modal-button-container" });
+
+        new obsidian_1.Setting(contentEl).addButton(b => b.setButtonText("+ Add rule").onClick(() => {
+            this.rules.push({ when: [], options: [], logic: "and" });
+            this.activeRuleIndex = this.rules.length - 1;
+            this.render();
+        }));
+
+        if (this.activeRuleIndex !== null && this.rules[this.activeRuleIndex]) {
+            const rule = this.rules[this.activeRuleIndex];
+            const editorEl = contentEl.createDiv({ style: "margin-top: 24px; border-top: 1px solid var(--background-modifier-border); padding-top: 16px;" });
+            
+            new obsidian_1.Setting(editorEl)
+                .setName("Match type")
+                .setDesc("Require all conditions to match, or any single condition.")
+                .addDropdown(d => {
+                    d.addOption("and", "All of the following (AND)");
+                    d.addOption("or", "Any of the following (OR)");
+                    d.setValue(rule.logic);
+                    d.onChange(v => rule.logic = v);
+                });
+
+            editorEl.createEl("h3", { text: "Conditions (If)", style: "margin-top: 16px;" });
+            const ifContainer = editorEl.createDiv({ cls: "taxoflow-schema-table-container" });
+            
+            const ifHeader = ifContainer.createDiv({ cls: "taxoflow-schema-grid if-grid table-header" });
+            ifHeader.createDiv({ text: "Property Key" });
+            ifHeader.createDiv({ text: "Value" });
+            ifHeader.createDiv({ text: "" });
+
+            const possibleParents = this.profile.selectors.filter(s => s.name !== this.selector.name);
+
+            rule.when.forEach((cond, idx) => {
+                const row = ifContainer.createDiv({ cls: "taxoflow-schema-grid if-grid", style: "align-items: start;" });
+            
+            const keySelect = row.createEl("select", { cls: "dropdown" });
+            keySelect.createEl("option", { value: "", text: "Select parent..." });
+            possibleParents.forEach(p => {
+                keySelect.createEl("option", { value: p.name, text: p.name });
+            });
+            keySelect.value = cond.key || "";
+            
+            keySelect.addEventListener("change", (e) => {
+                cond.key = e.target.value;
+                cond.values = [];
+                this.render();
+            });
+
+            const valWrapper = row.createDiv({ style: "display: flex; flex-direction: column; gap: 6px;" });
+            
+            if (cond.key) {
+                const parentSelector = possibleParents.find(s => s.name === cond.key);
+                const knownValues = parentSelector ? this.plugin.getKnownOptionsForSelector(parentSelector) : [];
+                
+                const pillContainer = valWrapper.createDiv({ cls: "taxo-pill-container" });
+                
+                cond.values.forEach((val) => {
+                    const pill = pillContainer.createEl("span", { cls: "taxo-pill" });
+                    pill.setText(val);
+                    const removeBtn = pill.createEl("span", { cls: "taxo-pill-remove", text: "x" });
+                    removeBtn.addEventListener("click", () => {
+                        cond.values = cond.values.filter(v => v !== val);
+                        this.render();
+                    });
+                });
+
+                const availableOptions = knownValues.filter(opt => !cond.values.includes(opt));
+                if (availableOptions.length > 0) {
+                    const select = pillContainer.createEl("select", { cls: "dropdown" });
+                    select.createEl("option", { text: "Add value...", value: "" });
+                    availableOptions.forEach((opt) => {
+                        select.createEl("option", { text: opt, value: opt });
+                    });
+                    select.addEventListener("change", (e) => {
+                        const selected = e.target.value;
+                        if (selected) {
+                            cond.values.push(selected);
+                            this.render();
+                        }
+                    });
+                } else if (knownValues.length === 0) {
+                    pillContainer.createEl("span", { text: "No known values for this parent.", cls: "setting-item-description" });
+                }
+            } else {
+                valWrapper.createEl("span", { text: "Select a property key first.", cls: "setting-item-description" });
+            }
+
+            const actionsWrapper = row.createDiv({ style: "display: flex; gap: 4px; align-items: center;" });
+            
+            if (cond.key) {
+                new obsidian_1.ButtonComponent(actionsWrapper)
+                    .setIcon("settings")
+                    .setTooltip("Manage parent property options")
+                    .onClick(async () => {
+                        await this.plugin.saveSettings();
+                        this.close();
+                        void this.plugin.openSelectorSettings(cond.key);
+                    });
+            }
+
+            new obsidian_1.ButtonComponent(actionsWrapper)
+                .setIcon("trash-2")
+                .setTooltip("Remove condition")
+                .onClick(() => {
+                    rule.when.splice(idx, 1);
+                    this.render();
+                });
+            });
+
+            new obsidian_1.Setting(editorEl).addButton(b => b.setButtonText("+ Add condition").onClick(() => {
+                rule.when.push({ key: "", values: [] });
+                this.render();
+            }));
+
+            editorEl.createEl("h3", { text: "Actions (Then)", style: "margin-top: 24px;" });
+            new obsidian_1.Setting(editorEl)
+                .setName("Options to offer")
+                .setDesc("Comma-separated or newline-separated values for the dropdown menu.")
+                .addTextArea(t => {
+                    t.inputEl.rows = 4;
+                    t.inputEl.style.width = "100%";
+                    t.inputEl.addClass("taxoflow-options-input");
+                    t.setValue(rule.options.join("\n"));
+                    t.onChange(v => {
+                        rule.options = v.split(/,|\n/).map(s => s.trim()).filter(Boolean);
+                    });
+                });
+        }
+
+        this.validationEl = contentEl.createDiv({ cls: "taxoflow-rule-validation setting-item-description", style: "margin-top: 16px;" });
+        const buttons = contentEl.createDiv({ cls: "modal-button-container", style: "margin-top: auto;" });
         new obsidian_1.ButtonComponent(buttons).setButtonText("Cancel").onClick(() => this.close());
         new obsidian_1.ButtonComponent(buttons).setButtonText("Save rules").setCta().onClick(() => this.saveRules());
+        
         this.installModalDrag(heading);
+        contentEl.scrollTop = currentScroll;
     }
+
     confirmDeleteRule(index) {
-        const rule = this.rules[index]; if (!rule) return;
-        const details = { profile: this.profile.name, propertyKey: this.selector.name, ruleNumber: index + 1, ruleConfiguration: rule, noteDataAffected: false };
+        const rule = this.rules[index];
+        if (!rule) return;
+        const details = { profile: this.profile.name, propertyKey: this.selector.name, ruleNumber: index + 1 };
         new TaxoDetailedConfirmModal(this.app, `Delete rule ${index + 1}?`, `Profile: ${this.profile.name}. Property: ${this.selector.name}. This removes this rule from plugin configuration only; no note data is changed.`, "Delete rule", JSON.stringify(details, null, 2), async () => {
             this.rules.splice(index, 1);
-            this.expandedRuleIndices = new Set([...this.expandedRuleIndices].filter(i => i !== index).map(i => i > index ? i - 1 : i));
-            this.dirtyRuleIndex = -1; this.render();
+            if (this.activeRuleIndex === index) {
+                this.activeRuleIndex = null;
+            } else if (this.activeRuleIndex > index) {
+                this.activeRuleIndex--;
+            }
+            this.render();
         }).open();
     }
-    renderParentValuePicker(container, parent, rule) {
-        const parentKey = parent.name;
-        const section = container.createDiv({ cls: "taxoflow-parent-value-editor" });
-        const currentValues = new Set(parseOptionList(rule.when[parentKey]));
-        const initialKnown = this.plugin.getKnownOptionsForSelector(parent);
-        const heading = section.createDiv({ cls: "taxoflow-parent-value-heading" });
-        heading.createEl("h4", { text: parent.label || humanize(parent.name) }); heading.createEl("code", { text: parentKey });
-        section.createEl("p", { text: "Choose one or more allowed values. Leave empty to accept any non-empty value for this parent condition.", cls: "setting-item-description" });
-        const search = section.createEl("input", { cls: "taxoflow-parent-value-search", attr: { type: "search", placeholder: "Search available values…", "aria-label": `Search values for ${parentKey}` } });
-        const optionsList = section.createDiv({ cls: "taxoflow-parent-value-list" });
-        const summary = section.createDiv({ cls: "taxoflow-parent-value-summary setting-item-description" });
-        const extraValues = section.createEl("textarea", { cls: "taxoflow-parent-value-add", attr: { rows: "2", placeholder: "Add other allowed value(s), comma-separated or one per line…", "aria-label": `Add allowed values for ${parentKey}` } });
-        const addValues = section.createEl("button", { cls: "taxoflow-parent-value-add-button", text: "Add values" });
-        const updateRule = () => {
-            const values = [...currentValues]; if (values.length) rule.when[parentKey] = values; else delete rule.when[parentKey];
-            this.dirtyRuleIndex = this.rules.indexOf(rule);
-            summary.setText(values.length ? `${values.length} value(s) selected` : "No specific values selected; any non-empty value will match.");
-            const line = section.closest(".taxoflow-rule-card")?.querySelector(".taxoflow-rule-card-condition-summary"); if (line) line.textContent = this.ruleLabel(rule, this.rules.indexOf(rule));
-        };
-        const renderOptions = () => {
-            optionsList.empty();
-            const known = uniqueStrings([...initialKnown, ...currentValues]); const query = search.value.trim().toLocaleLowerCase();
-            const filtered = query ? known.filter(value => value.toLocaleLowerCase().includes(query)) : known;
-            if (!filtered.length) optionsList.createEl("p", { text: known.length ? "No matching values." : "No configured values yet. Add allowed values below.", cls: "setting-item-description" });
-            const visible = filtered.slice(0, 100);
-            for (const option of visible) {
-                const label = optionsList.createEl("label", { cls: "taxoflow-parent-value-option" });
-                const checkbox = label.createEl("input", { attr: { type: "checkbox" } }); checkbox.checked = currentValues.has(option); label.createSpan({ text: option });
-                checkbox.addEventListener("change", () => { if (checkbox.checked) currentValues.add(option); else currentValues.delete(option); updateRule(); });
-            }
-            if (filtered.length > visible.length) optionsList.createEl("p", { text: `Showing ${visible.length} of ${filtered.length} matching values. Search to narrow the list.`, cls: "setting-item-description" });
-            if (!known.length) optionsList.createEl("p", { text: "Values are suggestions for rule construction; the parent property's own selector controls which values users can choose in notes.", cls: "setting-item-description" });
-            summary.setText(currentValues.size ? `${currentValues.size} value(s) selected` : "No specific values selected; any non-empty value will match.");
-        };
-        const addTypedValues = () => { const values = parseOptionList(extraValues.value); if (!values.length) return; values.forEach(value => currentValues.add(value)); extraValues.value = ""; updateRule(); renderOptions(); };
-        search.addEventListener("input", renderOptions); addValues.addEventListener("click", addTypedValues);
-        extraValues.addEventListener("keydown", event => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); addTypedValues(); } });
-        renderOptions();
-    }
-    ruleLabel(rule, index) {
-        const parts = Object.entries(rule.when || {}).map(([key, vals]) => `${this.profile.selectors.find(s => s.name === key)?.label || humanize(key)} = ${parseOptionList(vals).join(" | ") || "any non-empty value"}`);
-        return `${rule.logic === "or" ? "OR" : "AND"} · ${parts.join(rule.logic === "or" ? " OR " : " AND ") || "Any context"}`.slice(0, 260);
-    }
+
     saveRules() {
-        const dependencies = uniqueStrings(this.dependencies);
-        const undeclaredConditions = this.rules.flatMap((rule, index) => Object.keys(rule.when || {})
-            .filter(key => parseOptionList(rule.when[key]).length && !dependencies.includes(key))
-            .map(key => ({ index, key })));
-        if (undeclaredConditions.length) {
-            const details = undeclaredConditions.map(item => `Rule ${item.index + 1}: ${item.key}`).join("; ");
-            const message = `Cannot save: these rule conditions reference parent properties that are not enabled: ${details}. Enable the parent or remove the condition.`;
-            new obsidian_1.Notice(message);
-            this.validationEl.setText(message); this.validationEl.style.color = "var(--text-error)"; return;
+        const finalRules = this.rules.map(r => {
+            const whenObj = {};
+            for (const cond of r.when) {
+                if (cond.key && cond.values.length > 0) {
+                    whenObj[cond.key] = cond.values;
+                }
+            }
+            return {
+                when: whenObj,
+                options: r.options,
+                logic: r.logic
+            };
+        }).filter(r => Object.keys(r.when).length > 0 && r.options.length > 0);
+
+        const deps = new Set();
+        for (const r of finalRules) {
+            for (const k of Object.keys(r.when)) {
+                deps.add(k);
+            }
         }
-        const rules = this.rules.map(rule => {
-            const when = {}; for (const [key, value] of Object.entries(rule.when || {})) if (dependencies.includes(key) && parseOptionList(value).length) when[key] = parseOptionList(value);
-            return { when, options: parseOptionList(rule.options), logic: rule.logic === "or" ? "or" : "and" };
-        });
-        if (dependencies.some(key => !this.profile.selectors.some(s => s.name === key) || key === this.selector.name)) { new obsidian_1.Notice("Every parent must be another selector in this profile."); return; }
-        if (dependencies.length && !rules.length) { new obsidian_1.Notice("Add at least one rule for a dependent selector."); return; }
-        if (!dependencies.length && rules.length) { new obsidian_1.Notice("A rule cannot exist without a parent property."); return; }
-        if (rules.some(rule => !rule.options.length)) { new obsidian_1.Notice("Every rule needs at least one option."); return; }
-        if (rules.some(rule => !Object.keys(rule.when).length)) { new obsidian_1.Notice("Every rule needs at least one parent condition. Add a condition or remove the empty rule."); return; }
-        for (const rule of rules) if (Object.keys(rule.when).some(key => !dependencies.includes(key))) { new obsidian_1.Notice("A rule refers to a parent that is not enabled."); return; }
-        if (rulesAreCyclic({ ...this.selector, dependsOn: dependencies }, this.profile.selectors.map(s => s.name === this.selector.name ? { ...s, dependsOn: dependencies } : s))) { new obsidian_1.Notice("These dependencies would create a cycle."); return; }
-        const candidateSelector = { ...this.selector, dependsOn: dependencies, rules };
+        const dependencies = Array.from(deps);
+
+        if (dependencies.some(key => !this.profile.selectors.some(s => s.name === key) || key === this.selector.name)) { 
+            new obsidian_1.Notice("Every parent must be another selector in this profile."); 
+            return; 
+        }
+        if (this.rules.length > 0 && finalRules.length === 0) {
+            new obsidian_1.Notice("Ensure every rule has at least one valid condition and option to save.");
+            return;
+        }
+        
+        if (rulesAreCyclic({ ...this.selector, dependsOn: dependencies }, this.profile.selectors.map(s => s.name === this.selector.name ? { ...s, dependsOn: dependencies } : s))) { 
+            new obsidian_1.Notice("These dependencies would create a cycle."); 
+            return; 
+        }
+
+        const candidateSelector = { ...this.selector, dependsOn: dependencies, rules: finalRules };
         const candidateSelectors = this.profile.selectors.map(item => item.name === this.selector.name ? candidateSelector : item);
         const reachability = findUnreachableRuleDetails(candidateSelector, candidateSelectors);
         const impossible = reachability.filter(result => result.status === "impossible");
         const uncertain = reachability.filter(result => result.status === "unknown");
+        
         if (impossible.length) {
             const first = impossible[0];
             const message = `Cannot save: Rule ${first.index + 1} is impossible. ${first.reason} Correct the conflicting parent conditions before saving.`;
             new obsidian_1.Notice(message);
-            this.validationEl.setText(`Impossible rules: ${impossible.map(result => `Rule ${result.index + 1}: ${result.reason}`).join("; ")}`); this.validationEl.style.color = "var(--text-error)"; return;
+            this.validationEl.setText(`Impossible rules: ${impossible.map(result => `Rule ${result.index + 1}:${result.reason}`).join("; ")}`); 
+            this.validationEl.style.color = "var(--text-error)"; 
+            return;
         }
+        
         if (uncertain.length) {
-            this.validationEl.setText(`Reachability warning: ${uncertain.map(result => `Rule ${result.index + 1}: ${result.reason}`).join("; ")}. The validator cannot prove these rules reachable because the dependency graph is incomplete or cyclic.`);
+            this.validationEl.setText(`Reachability warning: ${uncertain.map(result => `Rule ${result.index + 1}:${result.reason}`).join("; ")}. The validator cannot prove these rules reachable because the dependency graph is incomplete or cyclic.`);
             this.validationEl.style.color = "var(--text-warning)";
         } else {
-            this.validationEl.setText(""); this.validationEl.style.color = "";
+            this.validationEl.setText(""); 
+            this.validationEl.style.color = "";
         }
-        const conflicts = conflictingRulePairs(rules);
+
+        const conflicts = conflictingRulePairs(finalRules);
         if (conflicts.length) {
             new obsidian_1.Notice(`Cannot save: Rule ${conflicts[0][0] + 1} and Rule ${conflicts[0][1] + 1} have equal specificity, overlapping conditions, and different options. Resolve all conflicts first.`);
-            this.validationEl.setText(`Conflicting rules: ${conflicts.map(pair => `${pair[0] + 1} and ${pair[1] + 1}`).join(", ")}. More-specific rules take priority; equally specific conflicts are not combined.`); this.validationEl.style.color = "var(--text-error)"; return;
+            this.validationEl.setText(`Conflicting rules: ${conflicts.map(pair => `${pair[0] + 1} and${pair[1] + 1}`).join(", ")}.`); 
+            this.validationEl.style.color = "var(--text-error)"; 
+            return;
         }
+
         const previous = { dependsOn: this.selector.dependsOn, rules: this.selector.rules, options: this.selector.options };
-        this.selector.dependsOn = dependencies; this.selector.rules = rules; if (dependencies.length) this.selector.options = [];
+        this.selector.dependsOn = dependencies; 
+        this.selector.rules = finalRules; 
+        if (dependencies.length) this.selector.options = [];
+
         void this.plugin.saveSettings().then(() => {
-            if (uncertain.length) new obsidian_1.Notice(`Rules saved with ${uncertain.length} reachability warning(s). Review Validate configuration when the dependency graph is complete.`);
-            this.plugin.refreshOpenSuggestions(this.selector.name); this.close(); this.onSaved();
+            if (uncertain.length) new obsidian_1.Notice(`Rules saved with ${uncertain.length} reachability warning(s).`);
+            this.plugin.refreshOpenSuggestions(this.selector.name); 
+            this.close(); 
+            this.onSaved();
         }).catch(error => {
-            this.selector.dependsOn = previous.dependsOn; this.selector.rules = previous.rules; this.selector.options = previous.options; this.plugin.invalidateRuntimeCaches();
+            this.selector.dependsOn = previous.dependsOn; 
+            this.selector.rules = previous.rules; 
+            this.selector.options = previous.options; 
+            this.plugin.invalidateRuntimeCaches();
             new obsidian_1.Notice(`Could not save dependency rules: ${error?.message || error}`);
         });
     }
@@ -1116,11 +1259,14 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
             const oldSearch = containerEl.querySelector(".taxoflow-property-search"); if (oldSearch) this._searchQuery = oldSearch.value;
             containerEl.querySelectorAll(".taxoflow-selector-card").forEach(card => { if (card._tfSelector) this._collapsedStateBySelector.set(card._tfSelector, card.classList.contains("is-collapsed")); });
         } else { this._searchQuery = ""; this._collapsedStateBySelector = new Map(); }
+        
         containerEl.empty(); containerEl.addClass("taxoflow-settings"); this._displayedProfileId = active?.id || null;
-        new obsidian_1.Setting(containerEl).setName("TaxoFlow Properties").setDesc("Manage profiles, property labels, and context-dependent suggestion rules.").setHeading();
+        new obsidian_1.Setting(containerEl).setName("TaxoFlow Properties").setDesc("Manage profiles, property schemas, context-dependent rules, and additional labels.").setHeading();
 
-        const activeSection = containerEl.createDiv({ cls: `taxoflow-settings-section taxoflow-active-profile-section${active ? " has-data" : ""}` });
+        const groupA = containerEl.createDiv({ cls: "taxoflow-settings-group" });
+        const activeSection = groupA.createDiv({ cls: `taxoflow-settings-section taxoflow-active-profile-section${active ? " has-data" : ""}` });
         const activeHeader = new obsidian_1.Setting(activeSection).setName("Active Profile").setDesc(active ? `${active.name} · ${active.namespace}` : "No profile configured. Create your first profile to begin.").setHeading();
+
         if (this.plugin.settings.profiles.length) {
             activeHeader.addDropdown(drop => {
                 this.plugin.settings.profiles.forEach(p => drop.addOption(p.id, `${p.name} (${p.namespace})`));
@@ -1138,6 +1284,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         }
 
         activeHeader.addExtraButton(button => button.setIcon("plus").setTooltip("Create profile").onClick(() => new TaxoCreateProfileModal(this.app, this.plugin, () => this.display()).open()));
+        
         const profileDetails = activeSection.createDiv({ cls: "taxoflow-active-profile-details" });
         let activeCollapsed = this._sectionCollapsed.activeProfile ?? false;
         const updateActiveCollapsed = () => {
@@ -1148,6 +1295,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         };
         let activeToggle = null;
         activeHeader.addExtraButton(button => { activeToggle = button; button.setIcon(activeCollapsed ? "chevron-right" : "chevron-down").setTooltip(activeCollapsed ? "Expand profile details" : "Collapse profile details").onClick(() => { activeCollapsed = !activeCollapsed; this._sectionCollapsed.activeProfile = activeCollapsed; updateActiveCollapsed(); }); });
+        
         if (active) {
             new obsidian_1.Setting(profileDetails).setName("Profile name").setDesc(active.name).addButton(b => b.setButtonText("Rename profile…").onClick(() => new TaxoRenameProfileModal(this.app, this.plugin, active, () => this.display()).open()));
             new obsidian_1.Setting(profileDetails).setName("Property namespace").setDesc(active.namespace).addButton(b => b.setButtonText("Change namespace…").onClick(() => new TaxoNamespaceModal(this.app, this.plugin, active, () => this.display()).open()));
@@ -1176,7 +1324,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         updateActiveCollapsed();
 
         if (active) {
-            const properties = containerEl.createDiv({ cls: "taxoflow-settings-section taxoflow-properties-section has-data" });
+            const properties = groupA.createDiv({ cls: "taxoflow-settings-section taxoflow-properties-section has-data" });
             const sticky = properties.createDiv({ cls: "taxoflow-properties-sticky-header" });
             const propertiesHeader = new obsidian_1.Setting(sticky).setName("Properties").setDesc("Underlying frontmatter keys stay stable; display labels customize the Obsidian Properties UI.").setHeading();
             const propertyBody = properties.createDiv({ cls: "taxoflow-properties-body" });
@@ -1189,7 +1337,6 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
 
             textContainer.appendChild(propertiesHeader.nameEl);
             textContainer.appendChild(propertiesHeader.descEl);
-
             propertiesHeader.infoEl.prepend(textContainer);
 
             propertiesHeader.addSearch(search => {
@@ -1242,7 +1389,6 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
             if (active.selectors && active.selectors.length > 0) {
                 for (const selector of active.selectors) this.renderSelector(list, active, selector);
             } else {
-
                 list.createEl("p", {
                     text: "No properties configured yet. Click '+' above to add your first selector property.",
                     cls: "taxoflow-properties-empty setting-item-description",
@@ -1253,9 +1399,8 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
             const noResults = propertyBody.createEl("p", { cls: "taxoflow-no-property-results", text: "No properties match this search." }); noResults.hidden = true; this._noPropertyResultsEl = noResults;
             this.filterProperties(active, this._searchQuery);
             updateToggleAllState();
-            this.renderExtraLabels(containerEl, active);
         } else {
-            const emptyProperties = containerEl.createDiv({ cls: "taxoflow-settings-section taxoflow-properties-section" });
+            const emptyProperties = groupA.createDiv({ cls: "taxoflow-settings-section taxoflow-properties-section" });
             const sticky = emptyProperties.createDiv({ cls: "taxoflow-properties-sticky-header" });
             const header = new obsidian_1.Setting(sticky).setName("Properties").setDesc("Create a profile before adding properties.").setHeading();
 
@@ -1265,7 +1410,6 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
 
             textContainer.appendChild(header.nameEl);
             textContainer.appendChild(header.descEl);
-
             header.infoEl.prepend(textContainer);
 
             const emptyBody = emptyProperties.createDiv({ cls: "taxoflow-properties-body" });
@@ -1284,8 +1428,11 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
             emptyBody.createEl("p", { text: "No active profile exists. Create your first profile to define a namespace and begin adding selectors.", cls: "setting-item-description" });
         }
 
-        this.renderOrphans(containerEl, this._selectorOccurrenceMap);
-        this.renderMaintenance(containerEl);
+        const groupB = containerEl.createDiv({ cls: "taxoflow-settings-group" });
+        this.renderPropertySchemas(groupB);
+        this.renderExtraLabels(groupB);
+        this.renderOrphans(groupB, this._selectorOccurrenceMap);
+        this.renderMaintenance(groupB);
 
         if (sameProfile && scrollPositions.length) this.restoreScrollPositions(scrollPositions);
         const focusKey = this.plugin.pendingFocusSelectorKey;
@@ -1311,6 +1458,56 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         }); });
         new obsidian_1.Setting(body).setName("Validate configuration").setDesc("Check namespaces, missing parents, dependency cycles, option lists, rule conflicts, and selector defaults.").addButton(b => b.setButtonText("Run checks…").onClick(() => new TaxoValidationModal(this.app, this.plugin).open()));
     }
+
+    renderPropertySchemas(containerEl) {
+        const section = containerEl.createDiv({ cls: "taxoflow-settings-section" });
+        const heading = new obsidian_1.Setting(section)
+            .setName("Property Schemas")
+            .setDesc("Define payloads that completely replace a note's frontmatter when a specific property is triggered.")
+            .setHeading();
+            
+        const body = section.createDiv({ cls: "taxoflow-properties-body" });
+        let collapsed = this._sectionCollapsed.schemas ?? false;
+        body.hidden = collapsed;
+        section.classList.toggle("is-collapsed", collapsed);
+        
+        heading.addExtraButton(button => button.setIcon("plus").setTooltip("Create Schema").onClick(() => {
+            new TaxoSchemaEditorModal(this.app, this.plugin, null, true, () => this.display()).open();
+        }));
+
+        heading.addExtraButton(button => {
+            button.setIcon(collapsed ? "chevron-right" : "chevron-down")
+                .setTooltip(collapsed ? "Expand Schemas" : "Collapse Schemas")
+                .onClick(() => {
+                    collapsed = !collapsed;
+                    this._sectionCollapsed.schemas = collapsed;
+                    body.hidden = collapsed;
+                    section.classList.toggle("is-collapsed", collapsed);
+                    button.setIcon(collapsed ? "chevron-right" : "chevron-down");
+                });
+        });
+
+        const schemas = this.plugin.settings.propertySchemas || [];
+        if (schemas.length === 0) {
+            body.createEl("p", { text: "No schemas configured. Click '+' to create one.", cls: "setting-item-description" });
+            return;
+        }
+
+        for (const schema of schemas) {
+            new obsidian_1.Setting(body)
+                .setName(schema.name)
+                .setDesc(`Triggers when "${schema.triggerKey || (schema.conditions?.[0]?.key)}" is matched. Injects ${schema.properties.length} properties.`)
+                .addButton(b => b.setIcon("pencil").setTooltip("Edit schema").onClick(() => {
+                    new TaxoSchemaEditorModal(this.app, this.plugin, schema, false, () => this.display()).open();
+                }))
+                .addButton(b => b.setIcon("trash-2").setTooltip("Delete schema").onClick(async () => {
+                    this.plugin.settings.propertySchemas = this.plugin.settings.propertySchemas.filter(s => s.id !== schema.id);
+                    await this.plugin.saveSettings();
+                    this.display();
+                }));
+        }
+    }
+
     renderOrphans(containerEl, occurrencesByKey = null, scanError = null) {
         let section = containerEl.querySelector(".taxoflow-orphans-section");
         if (!section) section = containerEl.createDiv({ cls: "taxoflow-settings-section taxoflow-orphans-section" });
@@ -1603,31 +1800,56 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         this.setSelectorCollapsed(group, selector, priorState === undefined ? true : priorState);
     }
     refreshLabel(group, selector) { const h = group.querySelector(".setting-item-name"); if (h) h.textContent = selector.label || humanize(selector.name); }
-    renderExtraLabels(containerEl, profile) {
+    renderExtraLabels(containerEl) {
         const section = containerEl.createDiv({ cls: "taxoflow-settings-section taxoflow-extra-labels-section" });
-        const header = new obsidian_1.Setting(section).setName("Additional property labels").setDesc("Optional display labels for properties without selector definitions.").setHeading();
+        const header = new obsidian_1.Setting(section).setName("Additional property labels").setDesc("Optional display labels for any property across your vault.").setHeading();
         const body = section.createDiv({ cls: "taxoflow-extra-labels-body" });
         let collapsed = this._sectionCollapsed.extraLabels ?? true; body.hidden = collapsed; section.classList.toggle("is-collapsed", collapsed);
+        
+        let labelSearchQuery = "";
+        header.addSearch(search => {
+            search.setPlaceholder("Search labels...");
+            search.onChange(value => {
+                labelSearchQuery = value.trim().toLocaleLowerCase();
+                body.querySelectorAll(".taxoflow-extra-label-row").forEach(row => {
+                    const key = (row.dataset.labelKey || "").toLocaleLowerCase();
+                    const val = (row.dataset.labelValue || "").toLocaleLowerCase();
+                    row.style.display = (!labelSearchQuery || key.includes(labelSearchQuery) || val.includes(labelSearchQuery)) ? "" : "none";
+                });
+            });
+        });
+
+        header.addButton(button => button.setButtonText("Label unassigned keys...").onClick(() => {
+            new TaxoUnlabeledPropertiesModal(this.app, this.plugin, () => this.display()).open();
+        }));
+
+        header.addExtraButton(button => button.setIcon("plus").setTooltip("Add property label").onClick(() => new TaxoAddLabelModal(this.app, this.plugin, () => this.display()).open()));
+        
         header.addExtraButton(button => button.setIcon(collapsed ? "chevron-right" : "chevron-down").setTooltip(collapsed ? "Expand additional labels" : "Collapse additional labels").onClick(() => {
             collapsed = !collapsed; this._sectionCollapsed.extraLabels = collapsed; body.hidden = collapsed; section.classList.toggle("is-collapsed", collapsed); button.setIcon(collapsed ? "chevron-right" : "chevron-down"); button.setTooltip(collapsed ? "Expand additional labels" : "Collapse additional labels");
         }));
-        for (const [key, label] of Object.entries(profile.propertyLabels || {})) {
+        
+        const labelsObj = this.plugin.settings.globalPropertyLabels || {};
+        if (Object.keys(labelsObj).length === 0) {
+            body.createEl("p", { text: "No additional labels configured. Click '+' to add one.", cls: "setting-item-description" });
+        }
+
+        for (const [key, label] of Object.entries(labelsObj)) {
             const row = new obsidian_1.Setting(body).setName(key).addText(t => t.setValue(label).onChange(value => {
-                if (value.trim()) profile.propertyLabels[key] = value.trim(); else delete profile.propertyLabels[key];
+                if (value.trim()) this.plugin.settings.globalPropertyLabels[key] = value.trim(); else delete this.plugin.settings.globalPropertyLabels[key];
                 this.plugin.refreshFlatSelectors(); this.plugin.scheduleLabelRefresh(); this.plugin.scheduleSettingsSave();
-                const rowEl = t.inputEl.closest(".setting-item"); if (rowEl) rowEl.dataset.labelValue = value.trim(); this.filterProperties(profile, this._searchQuery);
+                const rowEl = t.inputEl.closest(".setting-item"); if (rowEl) rowEl.dataset.labelValue = value.trim();
             }));
             row.settingEl.addClass("taxoflow-extra-label-row"); row.settingEl.dataset.labelKey = key; row.settingEl.dataset.labelValue = label;
             row.addExtraButton(b => b.setIcon("trash-2").setTooltip("Remove label").onClick(() => {
-                const details = { profile: profile.name, propertyKey: key, label, configurationToRemove: { propertyLabels: { [key]: label } }, noteDataAffected: false };
-                new TaxoDetailedConfirmModal(this.app, "Remove property label?", `Profile: ${profile.name}. This removes only the label configuration; the property's stored key and values are preserved in all notes.`, "Remove label", JSON.stringify(details, null, 2), async () => {
-                    delete profile.propertyLabels[key];
-                    try { await this.plugin.saveSettings(); } catch (error) { profile.propertyLabels[key] = label; this.plugin.invalidateRuntimeCaches(); throw error; }
+                const details = { propertyKey: key, label, noteDataAffected: false };
+                new TaxoDetailedConfirmModal(this.app, "Remove property label?", `This removes only the display label configuration; the property's stored key and values are preserved in all notes.`, "Remove label", JSON.stringify(details, null, 2), async () => {
+                    delete this.plugin.settings.globalPropertyLabels[key];
+                    try { await this.plugin.saveSettings(); } catch (error) { this.plugin.settings.globalPropertyLabels[key] = label; this.plugin.invalidateRuntimeCaches(); throw error; }
                     this.plugin.scheduleLabelRefresh(); this.display();
                 }).open();
             }));
         }
-        new obsidian_1.Setting(body).addButton(b => b.setButtonText("Add property label").onClick(() => this.addLabel(profile)));
     }
     addLabel(profile) {
         new TaxoAddLabelModal(this.app, this.plugin, profile, () => this.display()).open();
@@ -1686,19 +1908,317 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
     }
 }
 
-class TaxoAddLabelModal extends TaxoModal {
-    constructor(app, plugin, profile, onDone) { super(app, "Add property label", `Profile: ${profile.name}`); this.plugin = plugin; this.profile = profile; this.onDone = onDone; }
+class TaxoSchemaApplyConfirmModal extends TaxoModal {
+    constructor(app, plugin, schema, file) {
+        super(app, "Apply Property Schema?", `Note matched conditions for "${schema.name}".`);
+        this.plugin = plugin;
+        this.schema = schema;
+        this.file = file;
+    }
     onOpen() {
-        super.onOpen(); let key = this.profile.namespace, label = "";
-        new obsidian_1.Setting(this.contentEl).setName("Property key").setDesc("Use a complete key within this profile's namespace.").addText(t => t.setPlaceholder(`${this.profile.namespace}topic`).setValue(key).onChange(v => key = v.trim()));
+        super.onOpen();
+        this.contentEl.createEl("p", { text: `Would you like to apply the "${this.schema.name}" schema?` });
+        
+        const warning = this.contentEl.createDiv({ cls: "taxoflow-delete-warning" });
+        warning.createEl("strong", { text: "Warning: " });
+        warning.createSpan({ text: "Applying this schema will replace ALL existing properties. Your trigger properties and the schema properties will remain." });
+        
+        const buttons = this.contentEl.createDiv({ cls: "modal-button-container" });
+        new obsidian_1.ButtonComponent(buttons).setButtonText("No, leave as is").onClick(() => this.close());
+        new obsidian_1.ButtonComponent(buttons).setButtonText("Apply schema").setCta().onClick(async () => {
+            this.close();
+            this.plugin.isApplyingSchema = true;
+            try {
+                await this.plugin.processFrontMatterSerialized(this.file, fm => {
+                    const preserved = {};
+                    for (const cond of this.schema.conditions) {
+                        if (fm[cond.key] !== undefined) preserved[cond.key] = fm[cond.key];
+                    }
+                    
+                    for (const key of Object.keys(fm)) delete fm[key];
+                    
+                    for (const key of Object.keys(preserved)) fm[key] = preserved[key];
+                    
+                    const conditionKeys = this.schema.conditions.map(c => c.key);
+                    for (const prop of this.schema.properties) {
+                        if (conditionKeys.includes(prop.key)) continue;
+                        fm[prop.key] = prop.isList ? parseOptionList(prop.defaultValue) : String(prop.defaultValue || "").trim();
+                    }
+                });
+                new obsidian_1.Notice(`Applied "${this.schema.name}" schema to note.`);
+            } catch (error) {
+                new obsidian_1.Notice(`Failed to apply schema: ${error?.message || error}`);
+            } finally {
+                window.setTimeout(() => { this.plugin.isApplyingSchema = false; }, 500);
+            }
+        });
+    }
+}
+
+class TaxoSchemaEditorModal extends TaxoModal {
+    constructor(app, plugin, schema, isNew, onSaved) {
+        super(app, isNew ? "Create Property Schema" : "Edit Property Schema", "");
+        this.plugin = plugin;
+        this.isNew = isNew;
+        this.onSaved = onSaved;
+        this.schema = schema ? JSON.parse(JSON.stringify(schema)) : {
+            id: Date.now().toString(), name: "", matchType: "ALL", conditions: [{ key: "", value: "" }], properties: []
+        };
+    }
+    onOpen() {
+        super.onOpen();
+        this.modalEl.addClass("taxoflow-schema-editor-modal");
+        this.render();
+    }
+    render() {
+        const currentScroll = this.contentEl.scrollTop;
+        this.contentEl.empty();
+        this.contentEl.addClass("taxoflow-modal");
+        
+        const heading = this.contentEl.createEl("h2", { text: this.title, cls: "taxoflow-modal-drag-handle" });
+        
+        new obsidian_1.Setting(this.contentEl)
+            .setName("Schema name")
+            .addText(t => t.setValue(this.schema.name).setPlaceholder("e.g., Media Note").onChange(v => this.schema.name = v.trim()));
+
+        this.contentEl.createEl("h3", { text: "Conditions (If)" });
+        
+        new obsidian_1.Setting(this.contentEl)
+            .setName("Match type")
+            .setDesc("Require all conditions to match, or any single condition.")
+            .addDropdown(d => {
+                d.addOption("ALL", "All of the following");
+                d.addOption("ANY", "Any of the following");
+                d.setValue(this.schema.matchType || "ALL");
+                d.onChange(v => { this.schema.matchType = v; });
+            });
+
+        const ifContainer = this.contentEl.createDiv({ cls: "taxoflow-schema-table-container" });
+        
+        const ifHeader = ifContainer.createDiv({ cls: "taxoflow-schema-grid if-grid table-header" });
+        ifHeader.createDiv({ text: "Property Key" });
+        ifHeader.createDiv({ text: "Value" });
+        ifHeader.createDiv({ text: "" });
+
+        this.schema.conditions.forEach((cond, i) => {
+            const row = ifContainer.createDiv({ cls: "taxoflow-schema-grid if-grid" });
+            row.createEl("input", { attr: { type: "text", placeholder: "e.g., taxo.category" }, value: cond.key })
+               .addEventListener("input", e => cond.key = e.target.value);
+            row.createEl("input", { attr: { type: "text", placeholder: "e.g., media" }, value: cond.value })
+               .addEventListener("input", e => cond.value = e.target.value);
+
+            const delBtnContainer = row.createDiv();
+            new obsidian_1.ButtonComponent(delBtnContainer)
+                .setIcon("trash-2")
+                .setTooltip("Remove condition")
+                .onClick(() => { this.schema.conditions.splice(i, 1); this.render(); });
+        });
+
+        new obsidian_1.Setting(this.contentEl)
+            .addButton(b => b.setButtonText("+ Add condition").onClick(() => {
+                this.schema.conditions.push({key: "", value: ""});
+                this.render();
+            }));
+
+        this.contentEl.createEl("h3", { text: "Actions (Then)", style: "margin-top: 24px;" });
+        this.contentEl.createEl("p", { text: "These properties will replace the note's frontmatter. Drag rows to reorder them.", cls: "setting-item-description", style: "margin-bottom: 12px;" });
+
+        const thenContainer = this.contentEl.createDiv({ cls: "taxoflow-schema-table-container" });
+        
+        const thenHeader = thenContainer.createDiv({ cls: "taxoflow-schema-grid then-grid table-header" });
+        thenHeader.createDiv({ text: "" });
+        thenHeader.createDiv({ text: "Property Key" });
+        thenHeader.createDiv({ text: "Type" });
+        thenHeader.createDiv({ text: "Default Value" });
+        thenHeader.createDiv({ text: "" });
+
+        if (this.schema.properties.length === 0) {
+            thenContainer.createEl("p", { text: "No properties added yet.", cls: "setting-item-description" });
+        }
+
+        this.schema.properties.forEach((prop, i) => {
+            const row = thenContainer.createDiv({ cls: "taxoflow-schema-grid then-grid taxoflow-draggable-row", attr: { draggable: "true" } });
+            
+            const handle = row.createDiv({ cls: "taxoflow-drag-handle" });
+            obsidian_1.setIcon(handle, "grip-vertical");
+
+            row.addEventListener("dragstart", e => {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", i.toString());
+                row.classList.add("is-dragging");
+            });
+            row.addEventListener("dragend", () => {
+                row.classList.remove("is-dragging");
+                thenContainer.querySelectorAll(".is-drag-over").forEach(el => el.classList.remove("is-drag-over"));
+            });
+            row.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; row.classList.add("is-drag-over"); });
+            row.addEventListener("dragleave", () => row.classList.remove("is-drag-over"));
+            row.addEventListener("drop", e => {
+                e.preventDefault();
+                row.classList.remove("is-drag-over");
+                const fromIndex = parseInt(e.dataTransfer.getData("text/plain"), 10);
+                if (fromIndex !== i && !isNaN(fromIndex)) {
+                    const movedItem = this.schema.properties.splice(fromIndex, 1)[0];
+                    this.schema.properties.splice(i, 0, movedItem);
+                    this.render();
+                }
+            });
+
+            row.createEl("input", { attr: { type: "text", placeholder: "e.g., taxo.director" }, value: prop.key })
+               .addEventListener("input", e => prop.key = e.target.value.trim());
+
+            const typeSelect = row.createEl("select", { cls: "dropdown" });
+            typeSelect.createEl("option", { value: "text", text: "Text" });
+            typeSelect.createEl("option", { value: "list", text: "List" });
+            typeSelect.value = prop.isList ? "list" : "text";
+            typeSelect.addEventListener("change", e => prop.isList = (e.target.value === "list"));
+
+            row.createEl("input", { attr: { type: "text", placeholder: "e.g., Christopher Nolan" }, value: prop.defaultValue })
+               .addEventListener("input", e => prop.defaultValue = e.target.value);
+
+            const actions = row.createDiv();
+            new obsidian_1.ButtonComponent(actions)
+                .setIcon("trash-2")
+                .setTooltip("Remove property")
+                .onClick(() => { this.schema.properties.splice(i, 1); this.render(); });
+        });
+
+        new obsidian_1.Setting(this.contentEl)
+            .addButton(b => b.setButtonText("+ Add property").onClick(() => {
+                this.schema.properties.push({ key: "", defaultValue: "", isList: false });
+                this.render();
+            }));
+
+        const buttons = this.contentEl.createDiv({ cls: "modal-button-container", style: "margin-top: 24px;" });
+        new obsidian_1.ButtonComponent(buttons).setButtonText("Cancel").onClick(() => this.close());
+        new obsidian_1.ButtonComponent(buttons).setButtonText("Save Schema").setCta().onClick(async () => {
+            if (!this.schema.name) return new obsidian_1.Notice("Schema name is required.");
+            
+            this.schema.conditions = this.schema.conditions.filter(c => c.key.trim() !== "");
+            if (this.schema.conditions.length === 0) return new obsidian_1.Notice("At least one valid condition is required.");
+
+            if (this.isNew) {
+                this.plugin.settings.propertySchemas = this.plugin.settings.propertySchemas || [];
+                this.plugin.settings.propertySchemas.push(this.schema);
+            } else {
+                const index = this.plugin.settings.propertySchemas.findIndex(s => s.id === this.schema.id);
+                if (index > -1) this.plugin.settings.propertySchemas[index] = this.schema;
+            }
+            await this.plugin.saveSettings();
+            this.close();
+            this.onSaved();
+        });
+        
+        this.installModalDrag(heading);
+        this.contentEl.scrollTop = currentScroll;
+    }
+}
+
+class TaxoUnlabeledPropertiesModal extends TaxoModal {
+    constructor(app, plugin, onDone) {
+        super(app, "Unlabeled Property Keys", "Select property keys from your vault to assign display labels.");
+        this.plugin = plugin;
+        this.onDone = onDone;
+        this.unlabeledKeys = [];
+        this.searchQuery = "";
+    }
+    async onOpen() {
+        super.onOpen();
+        this.modalEl.addClass("taxoflow-schema-editor-modal"); 
+        this.contentEl.empty();
+        this.contentEl.addClass("taxoflow-modal");
+        const heading = this.contentEl.createEl("h2", { text: this.title, cls: "taxoflow-modal-drag-handle" });
+        this.contentEl.createEl("p", { text: "Scanning vault for properties...", cls: "setting-item-description" });
+        
+        window.setTimeout(() => {
+            const allKeys = this.plugin.getVaultPropertyKeys();
+            const configuredLabels = this.plugin.settings.globalPropertyLabels || {};
+            const profileLabels = new Set(this.plugin.settings.profiles.flatMap(p => Object.keys(p.propertyLabels || {})));
+            
+            const selectorKeys = new Set(this.plugin.settings.profiles.flatMap(p => p.selectors.map(s => s.name)));
+            
+            this.unlabeledKeys = allKeys.filter(k => !configuredLabels[k] && !profileLabels.has(k) && !selectorKeys.has(k)).sort();
+            this.render();
+        }, 50);
+    }
+    render() {
+        this.contentEl.empty();
+        const heading = this.contentEl.createEl("h2", { text: this.title, cls: "taxoflow-modal-drag-handle" });
+        this.contentEl.createEl("p", { text: `Found ${this.unlabeledKeys.length} unlabeled keys in your vault.`, cls: "setting-item-description", style: "margin-bottom: 12px;" });
+        
+        new obsidian_1.Setting(this.contentEl).addSearch(search => {
+            search.setPlaceholder("Search keys...").onChange(v => {
+                this.searchQuery = v.trim().toLocaleLowerCase();
+                this.renderList();
+            });
+        });
+        
+        this.listContainer = this.contentEl.createDiv({ cls: "taxoflow-schema-table-container" });
+        this.listContainer.style.height = "100%";
+        this.listContainer.style.overflowY = "auto";
+        
+        this.buttons = this.contentEl.createDiv({ cls: "modal-button-container", style: "margin-top: auto;" });
+        new obsidian_1.ButtonComponent(this.buttons).setButtonText("Done").setCta().onClick(() => {
+            this.close();
+            this.onDone();
+        });
+        
+        this.renderList();
+        this.installModalDrag(heading);
+    }
+    renderList() {
+        this.listContainer.empty();
+        const filtered = this.unlabeledKeys.filter(k => k.toLocaleLowerCase().includes(this.searchQuery));
+        
+        if (filtered.length === 0) {
+            this.listContainer.createEl("p", { text: "No keys match your search.", cls: "setting-item-description" });
+            return;
+        }
+        
+        for (const key of filtered.slice(0, 150)) {
+            const row = new obsidian_1.Setting(this.listContainer)
+                .setName(key)
+                .addText(t => {
+                    t.setPlaceholder("Display label...");
+                    t.setValue(this.plugin.settings.globalPropertyLabels[key] || "");
+                    t.onChange(val => {
+                        const label = val.trim();
+                        this.plugin.settings.globalPropertyLabels = this.plugin.settings.globalPropertyLabels || {};
+                        if (label) {
+                            this.plugin.settings.globalPropertyLabels[key] = label;
+                        } else {
+                            delete this.plugin.settings.globalPropertyLabels[key];
+                        }
+                        
+                        this.plugin.refreshFlatSelectors();
+                        
+                        this.plugin.scheduleSettingsSave(500);
+                        this.plugin.scheduleLabelRefresh();
+                    });
+                });
+            row.settingEl.style.borderBottom = "1px solid var(--background-modifier-border)";
+            row.settingEl.style.padding = "var(--size-4-2)";
+            row.settingEl.style.margin = "0";
+        }
+        if (filtered.length > 150) {
+            this.listContainer.createEl("p", { text: `Showing first 150 of ${filtered.length} keys. Please refine your search.`, cls: "setting-item-description", style: "padding: var(--size-4-2)" });
+        }
+    }
+}
+
+class TaxoAddLabelModal extends TaxoModal {
+    constructor(app, plugin, onDone) { super(app, "Add property label", "Add a display label for any property key in your vault."); this.plugin = plugin; this.onDone = onDone; }
+    onOpen() {
+        super.onOpen(); let key = "", label = "";
+        new obsidian_1.Setting(this.contentEl).setName("Property key").setDesc("The exact property key (e.g., taxo.topic or my-custom-field).").addText(t => t.setPlaceholder("topic").setValue(key).onChange(v => key = v.trim()));
         new obsidian_1.Setting(this.contentEl).setName("Label").addText(t => t.setPlaceholder("Topic").onChange(v => label = v.trim()));
         const buttons = this.contentEl.createDiv({ cls: "modal-button-container" });
         new obsidian_1.ButtonComponent(buttons).setButtonText("Cancel").onClick(() => this.close());
         new obsidian_1.ButtonComponent(buttons).setButtonText("Add label").setCta().onClick(async () => {
-            const suffix = key.startsWith(this.profile.namespace) ? key.slice(this.profile.namespace.length) : "";
-            if (!suffix || !/^[a-z0-9_-]+$/.test(suffix) || !label) { new obsidian_1.Notice("Use a valid property key within this profile's namespace and provide a label."); return; }
-            if (this.plugin.settings.profiles.some(p => p.selectors.some(s => s.name === key) || (p.propertyLabels && Object.prototype.hasOwnProperty.call(p.propertyLabels, key)))) { new obsidian_1.Notice("This property key is already configured. Edit its existing label instead."); return; }
-            this.profile.propertyLabels = this.profile.propertyLabels || {}; this.profile.propertyLabels[key] = label;
+            if (!key || !label) { new obsidian_1.Notice("Provide both a property key and a label."); return; }
+            this.plugin.settings.globalPropertyLabels = this.plugin.settings.globalPropertyLabels || {};
+            if (this.plugin.settings.globalPropertyLabels[key]) { new obsidian_1.Notice("This property key already has a global label. Edit it instead."); return; }
+            this.plugin.settings.globalPropertyLabels[key] = label;
             await this.plugin.saveSettings(); this.plugin.scheduleLabelRefresh(); this.close(); this.onDone();
         });
     }
@@ -2434,10 +2954,78 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         this.discoveredPropertyKeys = new Set(); this.autoRegistrationQueue = Promise.resolve();
         this.dependentReconcileQueues = new Map(); this.fileWriteQueues = new Map(); this.orphanInventoryGeneration = 0; this.orphanRefreshPaths = new Set(); this.settingsInventoryTimer = null; this.pendingPropertyMenuKey = ""; this.pendingPropertyMenuAt = 0; this.propertyTypeMenuContextKey = ""; this.propertyTypeMenuContextAt = 0; this.propertyTypeMenuContextProperty = null; this.propertyTypeMenuOptionHandler = null; this.decoratedNativeMenus = new WeakSet();
         this._movingFiles = new Set(); this._activeFolderConflictModals = new Set(); this._dismissedFolderConflicts = new Map();
+        this.isApplyingSchema = false;
+        this.lastKnownActiveFrontmatter = null;
     }
     async onload() {
         this._isStartingUp = true;
         window.setTimeout(() => { this._isStartingUp = false; }, 15000);
+
+        this.registerEvent(this.app.metadataCache.on("changed", (file, data, cache) => {
+            if (file !== this.app.workspace.getActiveFile()) return;
+            const newFm = cache?.frontmatter || {};
+            const oldFm = this.lastKnownActiveFrontmatter || {};
+            
+            if (!this.isApplyingSchema) {
+                const evaluate = (fm, conditions, matchType) => {
+                    if (!conditions || conditions.length === 0) return false;
+                    const getNorm = (f, k) => (Array.isArray(f[k]) ? f[k] : [f[k]]).filter(v => v != null).map(s => String(s).toLocaleLowerCase().trim());
+                    const check = (cond) => getNorm(fm, cond.key).includes(String(cond.value).toLocaleLowerCase().trim());
+                    return matchType === "ANY" ? conditions.some(check) : conditions.every(check);
+                };
+
+                for (const schema of this.settings.propertySchemas || []) {
+                    if (!schema.conditions || schema.conditions.length === 0) continue;
+                    
+                    const wasTriggered = evaluate(oldFm, schema.conditions, schema.matchType);
+                    const isTriggered = evaluate(newFm, schema.conditions, schema.matchType);
+                    
+                    if (isTriggered && !wasTriggered) {
+                        const currentKeys = Object.keys(newFm).filter(k => k !== "position");
+                        const schemaKeys = new Set([
+                            ...schema.conditions.map(c => c.key),
+                            ...schema.properties.map(p => p.key)
+                        ]);
+                        
+                        const hasExactSameKeys = currentKeys.length === schemaKeys.size && currentKeys.every(k => schemaKeys.has(k));
+                        
+                        if (!hasExactSameKeys) {
+                            new TaxoSchemaApplyConfirmModal(this.app, this, schema, file).open();
+                        }
+                        break; 
+                    }
+                }
+            }
+            this.lastKnownActiveFrontmatter = newFm;
+        }));
+
+        this.registerEvent(this.app.metadataCache.on("changed", (file, data, cache) => {
+            if (file !== this.app.workspace.getActiveFile()) return;
+            const newFm = cache?.frontmatter || {};
+            const oldFm = this.lastKnownActiveFrontmatter || {};
+            
+            if (!this.isApplyingSchema) {
+                const evaluate = (fm, conditions, matchType) => {
+                    if (!conditions || conditions.length === 0) return false;
+                    const getNorm = (f, k) => (Array.isArray(f[k]) ? f[k] : [f[k]]).filter(v => v != null).map(s => String(s).toLocaleLowerCase().trim());
+                    const check = (cond) => getNorm(fm, cond.key).includes(String(cond.value).toLocaleLowerCase().trim());
+                    return matchType === "ANY" ? conditions.some(check) : conditions.every(check);
+                };
+
+                for (const schema of this.settings.propertySchemas || []) {
+                    if (!schema.conditions || schema.conditions.length === 0) continue;
+                    
+                    const wasTriggered = evaluate(oldFm, schema.conditions, schema.matchType);
+                    const isTriggered = evaluate(newFm, schema.conditions, schema.matchType);
+                    
+                    if (isTriggered && !wasTriggered) {
+                        new TaxoSchemaApplyConfirmModal(this.app, this, schema, file).open();
+                        break; 
+                    }
+                }
+            }
+            this.lastKnownActiveFrontmatter = newFm;
+        }));
 
         await this.loadSettings();
         this.addSettingTab(new TaxoFlowSettingTab(this.app, this));
@@ -2579,7 +3167,6 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         this._dismissedFolderConflicts?.clear();
     }
     refreshFlatSelectors() {
-
         this.normalizedRulesCache = new WeakMap();
         this.preparedRulesCache = new WeakMap();
         this.selectorDependenciesCache = new WeakMap();
@@ -2589,10 +3176,15 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         this.settings.selectors = this.settings.profiles.flatMap(p => p.selectors);
         this.selectorByKey = new Map(this.settings.selectors.map(selector => [selector.name, selector]));
         this.labelByKey = new Map();
+        
         for (const profile of this.settings.profiles) {
             for (const selector of profile.selectors) if (selector.label) this.labelByKey.set(selector.name, selector.label);
-            for (const [key, label] of Object.entries(profile.propertyLabels || {})) if (label && !this.labelByKey.has(key)) this.labelByKey.set(key, label);
         }
+        
+        for (const [key, label] of Object.entries(this.settings.globalPropertyLabels || {})) {
+            if (label && !this.labelByKey.has(key)) this.labelByKey.set(key, label);
+        }
+        
         this.pruneStaleSuggestions();
         this.decorateOpenMenus();
     }
@@ -3823,6 +4415,8 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             activeProfileId: this.settings.activeProfileId,
             suppressedAutoRegistrationKeys: uniqueStrings(this.settings.suppressedAutoRegistrationKeys || []),
             universalExcludedFolders: uniqueStrings(this.settings.universalExcludedFolders || []),
+            propertySchemas: this.settings.propertySchemas || [],
+            globalPropertyLabels: this.settings.globalPropertyLabels || {},
             profiles: this.settings.profiles.map(profile => ({
                 id: profile.id, name: profile.name, namespace: profile.namespace,
                 selectors: profile.selectors.map(s => ({ name: s.name, label: s.label || "", options: parseOptionList(s.options), defaultValue: typeof s.defaultValue === "string" ? s.defaultValue : "", dependsOn: normalizeDependsOn(s.dependsOn), rules: normalizeRules(s.rules), customOptionsByContext: normalizeCustomContexts(s.customOptionsByContext) })),

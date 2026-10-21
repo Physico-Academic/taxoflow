@@ -563,3 +563,149 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.taxoflow-schema-prop-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-3);
+}
+
+.taxoflow-schema-prop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-3);
+  padding: var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.taxoflow-schema-table-container {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: var(--size-4-2);
+  margin-bottom: var(--size-4-2);
+}
+
+.taxoflow-schema-grid {
+  display: grid;
+  gap: var(--size-4-2);
+  align-items: center;
+  margin-bottom: var(--size-4-2);
+}
+
+.taxoflow-schema-grid:last-child {
+  margin-bottom: 0;
+}
+
+.taxoflow-schema-grid.if-grid {
+  grid-template-columns: 1fr 1fr auto;
+}
+
+.taxoflow-schema-grid.then-grid {
+  grid-template-columns: 1.5fr auto 1.5fr auto;
+}
+
+.taxoflow-schema-grid.table-header {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: var(--size-4-1);
+  margin-bottom: var(--size-4-2);
+}
+
+.taxoflow-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+  margin-bottom: var(--size-4-6);
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border-hover);
+  border-radius: var(--radius-l);
+  background: var(--background-secondary-alt);
+}
+.taxoflow-settings-group > .taxoflow-settings-section {
+  margin-block: 0;
+}
+
+.taxoflow-schema-editor-modal {
+  width: 80vw !important;
+  max-width: 900px !important;
+  height: 70vh !important;
+  resize: both;
+  overflow: auto;
+}
+
+.taxoflow-schema-editor-modal .taxoflow-modal {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.taxoflow-schema-editor-modal .taxoflow-modal > *:not(.modal-button-container) {
+  flex-shrink: 0;
+}
+
+.taxoflow-schema-grid.then-grid {
+  grid-template-columns: 24px 1.5fr auto 1.5fr auto;
+}
+
+.taxoflow-drag-handle {
+  cursor: grab;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.taxoflow-drag-handle:active {
+  cursor: grabbing;
+}
+
+.taxoflow-draggable-row {
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.taxoflow-draggable-row.is-dragging {
+  opacity: 0.4;
+  background: var(--background-modifier-hover);
+}
+
+.taxoflow-draggable-row.is-drag-over {
+  border-top: 2px solid var(--interactive-accent);
+}
+.taxo-pill-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+.taxo-pill {
+    background-color: var(--background-modifier-active-hover);
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-normal);
+    padding: 2px 8px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-ui-smaller);
+}
+
+.taxo-pill-remove {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-weight: bold;
+}
+
+.taxo-pill-remove:hover {
+    color: var(--text-error);
+}
