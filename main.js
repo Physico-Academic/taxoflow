@@ -1937,12 +1937,12 @@ class TaxoSchemaApplyConfirmModal extends TaxoModal {
                     
                     for (const key of Object.keys(fm)) delete fm[key];
                     
-                    for (const key of Object.keys(preserved)) fm[key] = preserved[key];
-                    
-                    const conditionKeys = this.schema.conditions.map(c => c.key);
                     for (const prop of this.schema.properties) {
-                        if (conditionKeys.includes(prop.key)) continue;
-                        fm[prop.key] = prop.isList ? parseOptionList(prop.defaultValue) : String(prop.defaultValue || "").trim();
+                        if (preserved[prop.key] !== undefined) {
+                            fm[prop.key] = preserved[prop.key];
+                        } else {
+                            fm[prop.key] = prop.isList ? parseOptionList(prop.defaultValue) : String(prop.defaultValue || "").trim();
+                        }
                     }
                 });
                 new obsidian_1.Notice(`Applied "${this.schema.name}" schema to note.`);
@@ -1974,6 +1974,18 @@ class TaxoSchemaEditorModal extends TaxoModal {
         const currentScroll = this.contentEl.scrollTop;
         this.contentEl.empty();
         this.contentEl.addClass("taxoflow-modal");
+
+        this.schema.conditions.forEach(cond => {
+            const k = cond.key.trim();
+            if (k) {
+                const prop = this.schema.properties.find(p => p.key === k);
+                if (!prop) {
+                    this.schema.properties.unshift({ key: k, defaultValue: cond.value, isList: false });
+                } else {
+                    prop.defaultValue = cond.value;
+                }
+            }
+        });
         
         const heading = this.contentEl.createEl("h2", { text: this.title, cls: "taxoflow-modal-drag-handle" });
         
@@ -2002,16 +2014,45 @@ class TaxoSchemaEditorModal extends TaxoModal {
 
         this.schema.conditions.forEach((cond, i) => {
             const row = ifContainer.createDiv({ cls: "taxoflow-schema-grid if-grid" });
+            
             row.createEl("input", { attr: { type: "text", placeholder: "e.g., taxo.category" }, value: cond.key })
-               .addEventListener("input", e => cond.key = e.target.value);
+               .addEventListener("change", e => {
+                   const oldKey = cond.key.trim();
+                   const newKey = e.target.value.trim();
+                   cond.key = newKey;
+                   if (oldKey && oldKey !== newKey) {
+                       const pIdx = this.schema.properties.findIndex(p => p.key === oldKey);
+                       if (pIdx > -1) {
+                           if (newKey) this.schema.properties[pIdx].key = newKey;
+                           else this.schema.properties.splice(pIdx, 1);
+                       }
+                   }
+                   this.render();
+               });
+               
             row.createEl("input", { attr: { type: "text", placeholder: "e.g., media" }, value: cond.value })
-               .addEventListener("input", e => cond.value = e.target.value);
+               .addEventListener("change", e => {
+                   cond.value = e.target.value;
+                   if (cond.key.trim()) {
+                       const prop = this.schema.properties.find(p => p.key === cond.key.trim());
+                       if (prop) prop.defaultValue = cond.value;
+                   }
+                   this.render();
+               });
 
             const delBtnContainer = row.createDiv();
             new obsidian_1.ButtonComponent(delBtnContainer)
                 .setIcon("trash-2")
                 .setTooltip("Remove condition")
-                .onClick(() => { this.schema.conditions.splice(i, 1); this.render(); });
+                .onClick(() => {
+                    const deletedKey = this.schema.conditions[i].key.trim();
+                    this.schema.conditions.splice(i, 1);
+                    if (deletedKey) {
+                        const pIdx = this.schema.properties.findIndex(p => p.key === deletedKey);
+                        if (pIdx > -1) this.schema.properties.splice(pIdx, 1);
+                    }
+                    this.render();
+                });
         });
 
         new obsidian_1.Setting(this.contentEl)
@@ -2064,23 +2105,46 @@ class TaxoSchemaEditorModal extends TaxoModal {
                 }
             });
 
-            row.createEl("input", { attr: { type: "text", placeholder: "e.g., taxo.director" }, value: prop.key })
-               .addEventListener("input", e => prop.key = e.target.value.trim());
+            const isCondition = this.schema.conditions.some(c => c.key.trim() === prop.key && prop.key !== "");
+
+            const keyInput = row.createEl("input", { attr: { type: "text", placeholder: "e.g., taxo.director" }, value: prop.key });
+            if (isCondition) {
+                keyInput.disabled = true;
+                keyInput.style.opacity = "0.6";
+            } else {
+                keyInput.addEventListener("input", e => prop.key = e.target.value.trim());
+            }
 
             const typeSelect = row.createEl("select", { cls: "dropdown" });
             typeSelect.createEl("option", { value: "text", text: "Text" });
             typeSelect.createEl("option", { value: "list", text: "List" });
             typeSelect.value = prop.isList ? "list" : "text";
-            typeSelect.addEventListener("change", e => prop.isList = (e.target.value === "list"));
+            if (isCondition) {
+                typeSelect.disabled = true;
+                typeSelect.style.opacity = "0.6";
+            } else {
+                typeSelect.addEventListener("change", e => prop.isList = (e.target.value === "list"));
+            }
 
-            row.createEl("input", { attr: { type: "text", placeholder: "e.g., Christopher Nolan" }, value: prop.defaultValue })
-               .addEventListener("input", e => prop.defaultValue = e.target.value);
+            const valInput = row.createEl("input", { attr: { type: "text", placeholder: "e.g., Christopher Nolan" }, value: prop.defaultValue });
+            if (isCondition) {
+                valInput.disabled = true;
+                valInput.style.opacity = "0.6";
+            } else {
+                valInput.addEventListener("input", e => prop.defaultValue = e.target.value);
+            }
 
             const actions = row.createDiv();
-            new obsidian_1.ButtonComponent(actions)
-                .setIcon("trash-2")
-                .setTooltip("Remove property")
-                .onClick(() => { this.schema.properties.splice(i, 1); this.render(); });
+            if (isCondition) {
+                const lockContainer = actions.createDiv({ attr: { style: "display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted);" } });
+                obsidian_1.setIcon(lockContainer, "lock");
+                lockContainer.setAttribute("aria-label", "Managed in Conditions");
+            } else {
+                new obsidian_1.ButtonComponent(actions)
+                    .setIcon("trash-2")
+                    .setTooltip("Remove property")
+                    .onClick(() => { this.schema.properties.splice(i, 1); this.render(); });
+            }
         });
 
         new obsidian_1.Setting(this.contentEl)

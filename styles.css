@@ -634,10 +634,10 @@
   margin-block: 0;
 }
 
-.taxoflow-schema-editor-modal {
-  width: 80vw !important;
-  max-width: 900px !important;
-  height: 70vh !important;
+.modal.taxoflow-schema-editor-modal {
+  width: 80vw;
+  max-width: 900px;
+  height: 70vh;
   resize: both;
   overflow: auto;
 }
