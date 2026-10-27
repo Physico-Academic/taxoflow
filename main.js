@@ -908,6 +908,7 @@ class TaxoRuleBuilderModal extends TaxoModal {
         }));
         
         this.activeRuleIndex = null;
+        this.rulesCollapsed = false;
     }
 
     onOpen() {
@@ -925,8 +926,31 @@ class TaxoRuleBuilderModal extends TaxoModal {
         const heading = contentEl.createEl("h2", { text: "Dependency rules", cls: "taxoflow-modal-drag-handle" });
         contentEl.createEl("p", { text: `${this.profile.name} · ${this.selector.name}`, cls: "setting-item-description", style: "margin-bottom: 12px;" });
 
-        contentEl.createEl("h3", { text: "Configured Rules" });
+        const rulesHeading = new obsidian_1.Setting(contentEl)
+            .setName("Configured Rules")
+            .setHeading();
+            
+        rulesHeading.addExtraButton(btn => {
+            btn.setIcon(this.rulesCollapsed ? "chevron-right" : "chevron-down")
+               .setTooltip(this.rulesCollapsed ? "Expand Configured Rules" : "Collapse Configured Rules")
+               .onClick(() => {
+                   this.rulesCollapsed = !this.rulesCollapsed;
+                   this.render();
+               });
+        });
+        
+        rulesHeading.settingEl.style.cursor = "pointer";
+        rulesHeading.settingEl.style.marginTop = "16px";
+        rulesHeading.settingEl.addEventListener("click", (e) => {
+            if (e.target.closest(".clickable-icon")) return;
+            this.rulesCollapsed = !this.rulesCollapsed;
+            this.render();
+        });
+
         const rulesContainer = contentEl.createDiv({ cls: "taxoflow-schema-table-container", style: "margin-bottom: 16px; padding: 12px;" });
+        if (this.rulesCollapsed) {
+            rulesContainer.style.display = "none";
+        }
         
         if (!this.rules.length) {
             rulesContainer.createEl("p", { text: "No rules configured yet.", cls: "setting-item-description", style: "margin: 0;" });
@@ -2061,8 +2085,52 @@ class TaxoSchemaEditorModal extends TaxoModal {
                 this.render();
             }));
 
-        this.contentEl.createEl("h3", { text: "Actions (Then)", style: "margin-top: 24px;" });
-        this.contentEl.createEl("p", { text: "These properties will replace the note's frontmatter. Drag rows to reorder them.", cls: "setting-item-description", style: "margin-bottom: 12px;" });
+        const thenHeaderContainer = this.contentEl.createDiv({ style: "display: flex; justify-content: space-between; align-items: flex-end; margin-top: 24px; margin-bottom: 12px;" });
+        
+        const thenTitleWrapper = thenHeaderContainer.createDiv();
+        thenTitleWrapper.createEl("h3", { text: "Actions (Then)", style: "margin: 0;" });
+        thenTitleWrapper.createEl("p", { text: "These properties will replace the note's frontmatter. Drag rows to reorder them.", cls: "setting-item-description", style: "margin: 4px 0 0 0;" });
+        
+        const copyPasteWrapper = thenHeaderContainer.createDiv({ style: "display: flex; gap: 8px;" });
+        new obsidian_1.ButtonComponent(copyPasteWrapper)
+            .setIcon("copy")
+            .setTooltip("Copy Actions")
+            .onClick(async () => {
+                const toCopy = this.schema.properties.filter(p => !this.schema.conditions.some(c => c.key.trim() === p.key && p.key !== ""));
+                await navigator.clipboard.writeText(JSON.stringify(toCopy));
+                new obsidian_1.Notice(`Copied ${toCopy.length} action(s) to clipboard.`);
+            });
+            
+        new obsidian_1.ButtonComponent(copyPasteWrapper)
+            .setIcon("clipboard-paste")
+            .setTooltip("Paste Actions")
+            .onClick(async () => {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    const pasted = JSON.parse(text);
+                    if (Array.isArray(pasted)) {
+                        let added = 0;
+                        for (const p of pasted) {
+                            if (typeof p.key === "string" && typeof p.defaultValue === "string") {
+                                if (!this.schema.properties.find(existing => existing.key === p.key)) {
+                                    this.schema.properties.push({
+                                        key: p.key,
+                                        defaultValue: p.defaultValue,
+                                        isList: !!p.isList
+                                    });
+                                    added++;
+                                }
+                            }
+                        }
+                        this.render();
+                        new obsidian_1.Notice(`Pasted ${added} new action(s).`);
+                    } else {
+                        throw new Error("Invalid clipboard format");
+                    }
+                } catch (e) {
+                    new obsidian_1.Notice("Failed to paste. Clipboard does not contain valid actions.");
+                }
+            });
 
         const thenContainer = this.contentEl.createDiv({ cls: "taxoflow-schema-table-container" });
         
