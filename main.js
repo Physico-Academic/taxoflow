@@ -717,6 +717,148 @@ class TaxoCreateProfileModal extends TaxoModal {
     }
 }
 
+const { SuggestModal, Notice } = require("obsidian");
+
+class TaxoGlobalSearchModal extends SuggestModal {
+    constructor(app, plugin) {
+        super(app);
+        this.plugin = plugin;
+        this.setPlaceholder("Search all property values...");
+        this.searchItems = this.buildSearchItems();
+    }
+
+    buildSearchItems() {
+        const items = new Map();
+        const settings = this.plugin.settings;
+
+        const addItem = (key, value, path, schema) => {
+            const uid = `${key}:::${value}`;
+            if (!items.has(uid) || schema) {
+                items.set(uid, { key, value, path, schema });
+            }
+        };
+
+        for (const schema of settings.propertySchemas || []) {
+            if (!schema.conditions || !Array.isArray(schema.conditions)) continue;
+            
+            const path = schema.conditions.map(c => ({ key: c.key, value: c.value }));
+            if (path.length === 0) continue;
+            
+            const leaf = path[path.length - 1];
+
+            for (let i = 0; i < path.length; i++) {
+                const subPath = path.slice(0, i + 1);
+                addItem(subPath[i].key, subPath[i].value, subPath, null);
+            }
+            addItem(leaf.key, leaf.value, path, schema);
+        }
+
+        for (const profile of settings.profiles || []) {
+            for (const selector of profile.selectors || []) {
+                const key = selector.name;
+                
+                for (const opt of selector.options || []) {
+                    addItem(key, opt, [{ key, value: opt }], null);
+                }
+                
+                for (const rule of selector.rules || []) {
+                    const parentNodes = [];
+                    if (rule.when) {
+                        for (const [pKey, pVals] of Object.entries(rule.when)) {
+                            if (pVals && pVals.length > 0) {
+                                parentNodes.push({ key: pKey, value: pVals[0] });
+                            }
+                        }
+                    }
+                    for (const opt of rule.options || []) {
+                        const path = [...parentNodes, { key, value: opt }];
+                        addItem(key, opt, path, null);
+                    }
+                }
+            }
+        }
+
+        return Array.from(items.values());
+    }
+
+    getSuggestions(query) {
+        const lowerQuery = query.toLowerCase();
+        return this.searchItems.filter(item => 
+            item.value.toLowerCase().includes(lowerQuery) || 
+            item.key.toLowerCase().includes(lowerQuery)
+        );
+    }
+
+    renderSuggestion(item, el) {
+        el.empty();
+        el.addClass("taxoflow-global-search-item");
+
+        const pathEl = el.createDiv({ cls: "taxoflow-search-path" });
+        pathEl.style.fontSize = "0.9em";
+        pathEl.style.color = "var(--text-muted)";
+
+        const pathNodes = item.path;
+        let visibleNodes = pathNodes;
+        
+        if (pathNodes.length > 5) {
+            visibleNodes = [{ isEllipsis: true }, ...pathNodes.slice(-5)];
+        }
+
+        for (let i = 0; i < visibleNodes.length; i++) {
+            const node = visibleNodes[i];
+            const isLast = i === visibleNodes.length - 1;
+
+            if (node.isEllipsis) {
+                pathEl.createSpan({ text: "... > " });
+                continue;
+            }
+
+            const span = pathEl.createSpan();
+            if (isLast) {
+                span.style.fontWeight = "bold";
+                span.style.color = "var(--text-normal)";
+                span.setText(node.value);
+            } else {
+                span.setText(node.value + " > ");
+            }
+        }
+    }
+
+    async onChooseSuggestion(item, evt) {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) {
+            new Notice("No active file to apply properties to.");
+            return;
+        }
+
+        await this.app.fileManager.processFrontMatter(file, (fm) => {
+            for (const key of Object.keys(fm)) {
+                delete fm[key];
+            }
+
+            for (const node of item.path) {
+                fm[node.key] = node.value;
+            }
+
+            if (item.schema && Array.isArray(item.schema.properties)) {
+                for (const prop of item.schema.properties) {
+                    if (fm[prop.key] === undefined) {
+                        fm[prop.key] = prop.isList 
+                            ? (prop.defaultValue ? [prop.defaultValue] : []) 
+                            : (prop.defaultValue || "");
+                    }
+                }
+                
+                if (Array.isArray(item.schema.conditions)) {
+                    for (const cond of item.schema.conditions) {
+                        fm[cond.key] = cond.value;
+                    }
+                }
+            }
+        });
+    }
+}
+
 class TaxoRenameProfileModal extends TaxoModal {
     constructor(app, plugin, profile, onRenamed) { super(app, "Rename profile", `Profile ID and namespace remain unchanged. Current namespace: ${profile.namespace}`); this.plugin = plugin; this.profile = profile; this.onRenamed = onRenamed; }
     onOpen() {
@@ -909,6 +1051,7 @@ class TaxoRuleBuilderModal extends TaxoModal {
         
         this.activeRuleIndex = null;
         this.rulesCollapsed = false;
+        this.searchQuery = "";
     }
 
     onOpen() {
@@ -930,6 +1073,15 @@ class TaxoRuleBuilderModal extends TaxoModal {
             .setName("Configured Rules")
             .setHeading();
             
+        rulesHeading.addSearch(search => {
+            search.setPlaceholder("Search rules...");
+            search.setValue(this.searchQuery);
+            search.onChange(value => {
+                this.searchQuery = value.trim().toLocaleLowerCase();
+                this.filterRules();
+            });
+        });
+            
         rulesHeading.addExtraButton(btn => {
             btn.setIcon(this.rulesCollapsed ? "chevron-right" : "chevron-down")
                .setTooltip(this.rulesCollapsed ? "Expand Configured Rules" : "Collapse Configured Rules")
@@ -942,7 +1094,7 @@ class TaxoRuleBuilderModal extends TaxoModal {
         rulesHeading.settingEl.style.cursor = "pointer";
         rulesHeading.settingEl.style.marginTop = "16px";
         rulesHeading.settingEl.addEventListener("click", (e) => {
-            if (e.target.closest(".clickable-icon")) return;
+            if (e.target.closest(".clickable-icon") || e.target.closest(".search-input-container")) return;
             this.rulesCollapsed = !this.rulesCollapsed;
             this.render();
         });
@@ -973,6 +1125,8 @@ class TaxoRuleBuilderModal extends TaxoModal {
                        .onClick(() => this.confirmDeleteRule(i));
                 });
                 
+            ruleSetting.settingEl.addClass("taxoflow-rule-row");
+            ruleSetting.settingEl.dataset.ruleIndex = i.toString();
             ruleSetting.settingEl.style.cursor = "pointer";
             ruleSetting.settingEl.addEventListener("click", (e) => {
                 if(e.target.closest(".setting-item-control")) return;
@@ -989,7 +1143,7 @@ class TaxoRuleBuilderModal extends TaxoModal {
 
         if (this.activeRuleIndex !== null && this.rules[this.activeRuleIndex]) {
             const rule = this.rules[this.activeRuleIndex];
-            const editorEl = contentEl.createDiv({ style: "margin-top: 24px; border-top: 1px solid var(--background-modifier-border); padding-top: 16px;" });
+            const editorEl = contentEl.createDiv({ cls: "taxoflow-rule-editor", style: "margin-top: 24px; border-top: 1px solid var(--background-modifier-border); padding-top: 16px;" });
             
             new obsidian_1.Setting(editorEl)
                 .setName("Match type")
@@ -1014,78 +1168,78 @@ class TaxoRuleBuilderModal extends TaxoModal {
             rule.when.forEach((cond, idx) => {
                 const row = ifContainer.createDiv({ cls: "taxoflow-schema-grid if-grid", style: "align-items: start;" });
             
-            const keySelect = row.createEl("select", { cls: "dropdown" });
-            keySelect.createEl("option", { value: "", text: "Select parent..." });
-            possibleParents.forEach(p => {
-                keySelect.createEl("option", { value: p.name, text: p.name });
-            });
-            keySelect.value = cond.key || "";
-            
-            keySelect.addEventListener("change", (e) => {
-                cond.key = e.target.value;
-                cond.values = [];
-                this.render();
-            });
-
-            const valWrapper = row.createDiv({ style: "display: flex; flex-direction: column; gap: 6px;" });
-            
-            if (cond.key) {
-                const parentSelector = possibleParents.find(s => s.name === cond.key);
-                const knownValues = parentSelector ? this.plugin.getKnownOptionsForSelector(parentSelector) : [];
-                
-                const pillContainer = valWrapper.createDiv({ cls: "taxo-pill-container" });
-                
-                cond.values.forEach((val) => {
-                    const pill = pillContainer.createEl("span", { cls: "taxo-pill" });
-                    pill.setText(val);
-                    const removeBtn = pill.createEl("span", { cls: "taxo-pill-remove", text: "x" });
-                    removeBtn.addEventListener("click", () => {
-                        cond.values = cond.values.filter(v => v !== val);
-                        this.render();
-                    });
+                const keySelect = row.createEl("select", { cls: "dropdown" });
+                keySelect.createEl("option", { value: "", text: "Select parent..." });
+                possibleParents.forEach(p => {
+                    keySelect.createEl("option", { value: p.name, text: p.name });
                 });
-
-                const availableOptions = knownValues.filter(opt => !cond.values.includes(opt));
-                if (availableOptions.length > 0) {
-                    const select = pillContainer.createEl("select", { cls: "dropdown" });
-                    select.createEl("option", { text: "Add value...", value: "" });
-                    availableOptions.forEach((opt) => {
-                        select.createEl("option", { text: opt, value: opt });
-                    });
-                    select.addEventListener("change", (e) => {
-                        const selected = e.target.value;
-                        if (selected) {
-                            cond.values.push(selected);
-                            this.render();
-                        }
-                    });
-                } else if (knownValues.length === 0) {
-                    pillContainer.createEl("span", { text: "No known values for this parent.", cls: "setting-item-description" });
-                }
-            } else {
-                valWrapper.createEl("span", { text: "Select a property key first.", cls: "setting-item-description" });
-            }
-
-            const actionsWrapper = row.createDiv({ style: "display: flex; gap: 4px; align-items: center;" });
-            
-            if (cond.key) {
-                new obsidian_1.ButtonComponent(actionsWrapper)
-                    .setIcon("settings")
-                    .setTooltip("Manage parent property options")
-                    .onClick(async () => {
-                        await this.plugin.saveSettings();
-                        this.close();
-                        void this.plugin.openSelectorSettings(cond.key);
-                    });
-            }
-
-            new obsidian_1.ButtonComponent(actionsWrapper)
-                .setIcon("trash-2")
-                .setTooltip("Remove condition")
-                .onClick(() => {
-                    rule.when.splice(idx, 1);
+                keySelect.value = cond.key || "";
+                
+                keySelect.addEventListener("change", (e) => {
+                    cond.key = e.target.value;
+                    cond.values = [];
                     this.render();
                 });
+
+                const valWrapper = row.createDiv({ style: "display: flex; flex-direction: column; gap: 6px;" });
+                
+                if (cond.key) {
+                    const parentSelector = possibleParents.find(s => s.name === cond.key);
+                    const knownValues = parentSelector ? this.plugin.getKnownOptionsForSelector(parentSelector) : [];
+                    
+                    const pillContainer = valWrapper.createDiv({ cls: "taxo-pill-container" });
+                    
+                    cond.values.forEach((val) => {
+                        const pill = pillContainer.createEl("span", { cls: "taxo-pill" });
+                        pill.setText(val);
+                        const removeBtn = pill.createEl("span", { cls: "taxo-pill-remove", text: "x" });
+                        removeBtn.addEventListener("click", () => {
+                            cond.values = cond.values.filter(v => v !== val);
+                            this.render();
+                        });
+                    });
+
+                    const availableOptions = knownValues.filter(opt => !cond.values.includes(opt));
+                    if (availableOptions.length > 0) {
+                        const select = pillContainer.createEl("select", { cls: "dropdown" });
+                        select.createEl("option", { text: "Add value...", value: "" });
+                        availableOptions.forEach((opt) => {
+                            select.createEl("option", { text: opt, value: opt });
+                        });
+                        select.addEventListener("change", (e) => {
+                            const selected = e.target.value;
+                            if (selected) {
+                                cond.values.push(selected);
+                                this.render();
+                            }
+                        });
+                    } else if (knownValues.length === 0) {
+                        pillContainer.createEl("span", { text: "No known values for this parent.", cls: "setting-item-description" });
+                    }
+                } else {
+                    valWrapper.createEl("span", { text: "Select a property key first.", cls: "setting-item-description" });
+                }
+
+                const actionsWrapper = row.createDiv({ style: "display: flex; gap: 4px; align-items: center;" });
+                
+                if (cond.key) {
+                    new obsidian_1.ButtonComponent(actionsWrapper)
+                        .setIcon("settings")
+                        .setTooltip("Manage parent property options")
+                        .onClick(async () => {
+                            await this.plugin.saveSettings();
+                            this.close();
+                            void this.plugin.openSelectorSettings(cond.key);
+                        });
+                }
+
+                new obsidian_1.ButtonComponent(actionsWrapper)
+                    .setIcon("trash-2")
+                    .setTooltip("Remove condition")
+                    .onClick(() => {
+                        rule.when.splice(idx, 1);
+                        this.render();
+                    });
             });
 
             new obsidian_1.Setting(editorEl).addButton(b => b.setButtonText("+ Add condition").onClick(() => {
@@ -1135,6 +1289,9 @@ class TaxoRuleBuilderModal extends TaxoModal {
                         this.selector.customOptionsByContext.splice(idx, 1);
                         this.render();
                     }));
+                    
+                row.settingEl.addClass("taxoflow-learned-row");
+                row.settingEl.dataset.learnedIndex = idx.toString();
                 row.settingEl.style.borderBottom = "1px solid var(--background-modifier-border)";
                 row.settingEl.style.paddingBottom = "12px";
                 row.settingEl.style.marginBottom = "12px";
@@ -1152,7 +1309,57 @@ class TaxoRuleBuilderModal extends TaxoModal {
         new obsidian_1.ButtonComponent(buttons).setButtonText("Save rules").setCta().onClick(() => this.saveRules());
         
         this.installModalDrag(heading);
+        this.filterRules();
         contentEl.scrollTop = currentScroll;
+    }
+
+    filterRules() {
+        const query = this.searchQuery;
+        let activeVisible = true;
+        
+        const ruleRows = this.contentEl.querySelectorAll('.taxoflow-rule-row');
+        ruleRows.forEach(row => {
+            const index = parseInt(row.dataset.ruleIndex, 10);
+            const rule = this.rules[index];
+            if (!rule) return;
+            
+            const searchableText = [
+                ...rule.when.map(c => c.key),
+                ...rule.when.flatMap(c => c.values),
+                ...rule.options
+            ].join(" ").toLocaleLowerCase();
+            
+            if (!query || searchableText.includes(query)) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+                if (index === this.activeRuleIndex) activeVisible = false;
+            }
+        });
+        
+        const editorEl = this.contentEl.querySelector('.taxoflow-rule-editor');
+        if (editorEl) {
+            editorEl.style.display = activeVisible ? "" : "none";
+        }
+        
+        const learnedRows = this.contentEl.querySelectorAll('.taxoflow-learned-row');
+        learnedRows.forEach(row => {
+            const index = parseInt(row.dataset.learnedIndex, 10);
+            const entry = this.selector.customOptionsByContext[index];
+            if (!entry) return;
+            
+            const searchableText = [
+                ...Object.keys(entry.context),
+                ...Object.values(entry.context).flat(),
+                ...entry.options
+            ].join(" ").toLocaleLowerCase();
+            
+            if (!query || searchableText.includes(query)) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
     }
 
     confirmDeleteRule(index) {
@@ -3361,6 +3568,14 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             }
             this.lastKnownActiveFrontmatter = newFm;
         }));
+
+        this.addCommand({
+            id: "open-taxoflow-global-search",
+            name: "Search all profile properties",
+            callback: () => {
+                new TaxoGlobalSearchModal(this.app, this).open();
+            }
+        });
 
         await this.loadSettings();
         this.addSettingTab(new TaxoFlowSettingTab(this.app, this));
