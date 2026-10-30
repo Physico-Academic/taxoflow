@@ -525,11 +525,14 @@
   color: var(--text-normal); font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: 100%; pointer-events: none;
 }
-.taxoflow-open-plugin-settings-menu-item { border-top: 1px solid var(--background-modifier-border); margin-top: var(--size-2-2); padding-top: var(--size-2-2); }
 .menu .menu-item.taxoflow-open-plugin-settings-menu-item:hover,
 .menu .menu-item.taxoflow-open-plugin-settings-menu-item.is-selected,
 .menu .menu-item.taxoflow-open-plugin-settings-menu-item.selected,
-.menu .menu-item.taxoflow-open-plugin-settings-menu-item:focus-visible {
+.menu .menu-item.taxoflow-open-plugin-settings-menu-item:focus-visible,
+.menu .menu-item.taxoflow-open-schema-menu-item:hover,
+.menu .menu-item.taxoflow-open-schema-menu-item.is-selected,
+.menu .menu-item.taxoflow-open-schema-menu-item.selected,
+.menu .menu-item.taxoflow-open-schema-menu-item:focus-visible {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }

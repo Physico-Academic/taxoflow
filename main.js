@@ -1108,6 +1108,44 @@ class TaxoRuleBuilderModal extends TaxoModal {
                 });
         }
 
+        const customContexts = this.selector.customOptionsByContext || [];
+        if (customContexts.length > 0) {
+            const learnedHeading = new obsidian_1.Setting(contentEl)
+                .setName("Learned Contextual Options")
+                .setDesc("These options were dynamically learned when you typed custom values into notes under specific parent contexts.")
+                .setHeading();
+                
+            learnedHeading.settingEl.style.marginTop = "32px";
+            learnedHeading.settingEl.style.borderTop = "1px solid var(--background-modifier-border)";
+            learnedHeading.settingEl.style.paddingTop = "24px";
+                
+            const learnedContainer = contentEl.createDiv({ cls: "taxoflow-schema-table-container", style: "margin-bottom: 16px; padding: 12px;" });
+            
+            customContexts.forEach((entry, idx) => {
+                const contextStr = Object.entries(entry.context).map(([k, v]) => {
+                    const shortK = k.split(".").pop();
+                    return `${shortK}: ${v.join(" or ")}`;
+                }).join(", ");
+                const optionsStr = entry.options.join(", ");
+                
+                const row = new obsidian_1.Setting(learnedContainer)
+                    .setName(`When ${contextStr}`)
+                    .setDesc(`Added options: ${optionsStr}`)
+                    .addButton(btn => btn.setIcon("trash-2").setTooltip("Remove learned options").onClick(() => {
+                        this.selector.customOptionsByContext.splice(idx, 1);
+                        this.render();
+                    }));
+                row.settingEl.style.borderBottom = "1px solid var(--background-modifier-border)";
+                row.settingEl.style.paddingBottom = "12px";
+                row.settingEl.style.marginBottom = "12px";
+            });
+            if (learnedContainer.lastChild) {
+                learnedContainer.lastChild.style.borderBottom = "none";
+                learnedContainer.lastChild.style.marginBottom = "0";
+                learnedContainer.lastChild.style.paddingBottom = "0";
+            }
+        }
+
         this.validationEl = contentEl.createDiv({ cls: "taxoflow-rule-validation setting-item-description", style: "margin-top: 16px;" });
         const buttons = contentEl.createDiv({ cls: "modal-button-container", style: "margin-top: auto;" });
         new obsidian_1.ButtonComponent(buttons).setButtonText("Cancel").onClick(() => this.close());
@@ -1258,12 +1296,110 @@ class TaxoDefaultValueConflictModal extends TaxoModal {
         });
     }
 }
+class TaxoSaveNoteToSchemaModal extends TaxoModal {
+    constructor(app, plugin, file) {
+        super(app, "Save Note Properties to Schema", `Extracting properties from ${file.name}`);
+        this.plugin = plugin;
+        this.file = file;
+        this.searchQuery = "";
+    }
+    onOpen() {
+        super.onOpen();
+        this.modalEl.addClass("taxoflow-schema-editor-modal");
+        this.render();
+    }
+    render() {
+        this.contentEl.empty();
+        this.contentEl.addClass("taxoflow-modal");
+        const heading = this.contentEl.createEl("h2", { text: this.title, cls: "taxoflow-modal-drag-handle" });
+        
+        const cache = this.app.metadataCache.getFileCache(this.file);
+        const frontmatter = cache?.frontmatter || {};
+        const currentProps = [];
+        for (const [k, v] of Object.entries(frontmatter)) {
+            if (k === "position") continue;
+            currentProps.push({
+                key: k,
+                defaultValue: Array.isArray(v) ? v.join(", ") : String(v ?? ""),
+                isList: Array.isArray(v)
+            });
+        }
+
+        if (currentProps.length === 0) {
+            this.contentEl.createEl("p", { text: "No properties found in the current note.", cls: "setting-item-description" });
+            return;
+        }
+
+        const createBtnContainer = this.contentEl.createDiv({ style: "margin-bottom: 24px; display: flex; gap: 12px; align-items: center;" });
+        new obsidian_1.ButtonComponent(createBtnContainer)
+            .setButtonText("+ Create New Schema")
+            .setCta()
+            .onClick(() => {
+                this.close();
+                const newSchema = {
+                    id: Date.now().toString(),
+                    name: "",
+                    matchType: "ALL",
+                    conditions: [{ key: "", value: "" }],
+                    properties: currentProps
+                };
+                new TaxoSchemaEditorModal(this.app, this.plugin, newSchema, true, () => this.plugin.settingTab?.display()).open();
+            });
+            
+        this.contentEl.createEl("h3", { text: "Or update an existing schema:", style: "margin-bottom: 12px;" });
+        
+        new obsidian_1.Setting(this.contentEl).addSearch(search => {
+            search.setPlaceholder("Search existing schemas...").onChange(v => {
+                this.searchQuery = v.trim().toLocaleLowerCase();
+                this.renderList(currentProps);
+            });
+        });
+        
+        this.listContainer = this.contentEl.createDiv({ cls: "taxoflow-schema-table-container", style: "max-height: 40vh; overflow-y: auto;" });
+        this.renderList(currentProps);
+        
+        this.installModalDrag(heading);
+    }
+    
+    renderList(currentProps) {
+        this.listContainer.empty();
+        const schemas = this.plugin.settings.propertySchemas || [];
+        const filtered = schemas.filter(s => s.name.toLocaleLowerCase().includes(this.searchQuery));
+        
+        if (filtered.length === 0) {
+            this.listContainer.createEl("p", { text: "No schemas found.", cls: "setting-item-description" });
+            return;
+        }
+        
+        for (const schema of filtered) {
+            const row = new obsidian_1.Setting(this.listContainer)
+                .setName(schema.name)
+                .setDesc(`${schema.properties.length} existing actions`)
+                .addButton(btn => btn.setButtonText("Update Schema").onClick(() => {
+                    this.close();
+                    const updatedSchema = JSON.parse(JSON.stringify(schema));
+                    updatedSchema.properties = currentProps;
+                    
+                    updatedSchema.conditions.forEach(cond => {
+                        const k = cond.key.trim();
+                        if (k && !updatedSchema.properties.find(p => p.key === k)) {
+                            updatedSchema.properties.unshift({ key: k, defaultValue: cond.value, isList: false });
+                        }
+                    });
+                    
+                    new TaxoSchemaEditorModal(this.app, this.plugin, updatedSchema, false, () => this.plugin.settingTab?.display()).open();
+                }));
+            row.settingEl.style.borderBottom = "1px solid var(--background-modifier-border)";
+        }
+    }
+}
 class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
     constructor(app, plugin) {
         super(app, plugin);
         this.plugin = plugin;
         this._displayedProfileId = null;
         this._searchQuery = "";
+        this._schemaSearchQuery = "";
         this._collapsedStateBySelector = new Map();
         this._sectionCollapsed = { activeProfile: false, properties: false, extraLabels: true, orphans: false, maintenance: true };
         this._orphanCategoryCollapsed = { noProfile: true, profileMissing: true };
@@ -1485,7 +1621,9 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
 
     renderPropertySchemas(containerEl) {
         const section = containerEl.createDiv({ cls: "taxoflow-settings-section" });
-        const heading = new obsidian_1.Setting(section)
+        
+        const sticky = section.createDiv({ cls: "taxoflow-properties-sticky-header" });
+        const heading = new obsidian_1.Setting(sticky)
             .setName("Property Schemas")
             .setDesc("Define payloads that completely replace a note's frontmatter when a specific property is triggered.")
             .setHeading();
@@ -1494,6 +1632,26 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         let collapsed = this._sectionCollapsed.schemas ?? false;
         body.hidden = collapsed;
         section.classList.toggle("is-collapsed", collapsed);
+        sticky.style.borderBottom = collapsed ? "none" : "";
+        
+        const textContainer = createDiv({ cls: 'taxoflow-properties-text-wrapper' });
+        textContainer.style.display = 'flex';
+        textContainer.style.flexDirection = 'column';
+        textContainer.appendChild(heading.nameEl);
+        textContainer.appendChild(heading.descEl);
+        heading.infoEl.prepend(textContainer);
+
+        heading.addSearch(search => {
+            search.setPlaceholder("Search schemas…").setValue(this._schemaSearchQuery || "");
+            search.inputEl.addClass("taxoflow-property-search");
+            search.onChange(value => {
+                this._schemaSearchQuery = value.trim().toLocaleLowerCase();
+                body.querySelectorAll(".taxoflow-schema-row").forEach(row => {
+                    const name = (row.dataset.schemaName || "").toLocaleLowerCase();
+                    row.style.display = (!this._schemaSearchQuery || name.includes(this._schemaSearchQuery)) ? "" : "none";
+                });
+            });
+        });
         
         heading.addExtraButton(button => button.setIcon("plus").setTooltip("Create Schema").onClick(() => {
             new TaxoSchemaEditorModal(this.app, this.plugin, null, true, () => this.display()).open();
@@ -1507,6 +1665,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
                     this._sectionCollapsed.schemas = collapsed;
                     body.hidden = collapsed;
                     section.classList.toggle("is-collapsed", collapsed);
+                    sticky.style.borderBottom = collapsed ? "none" : "";
                     button.setIcon(collapsed ? "chevron-right" : "chevron-down");
                 });
         });
@@ -1518,7 +1677,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         }
 
         for (const schema of schemas) {
-            new obsidian_1.Setting(body)
+            const row = new obsidian_1.Setting(body)
                 .setName(schema.name)
                 .setDesc(`Triggers when "${schema.triggerKey || (schema.conditions?.[0]?.key)}" is matched. Injects ${schema.properties.length} properties.`)
                 .addButton(b => b.setIcon("pencil").setTooltip("Edit schema").onClick(() => {
@@ -1529,6 +1688,12 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
                     await this.plugin.saveSettings();
                     this.display();
                 }));
+                
+            row.settingEl.addClass("taxoflow-schema-row");
+            row.settingEl.dataset.schemaName = schema.name;
+            if (this._schemaSearchQuery && !schema.name.toLocaleLowerCase().includes(this._schemaSearchQuery)) {
+                row.settingEl.style.display = "none";
+            }
         }
     }
 
@@ -2290,6 +2455,44 @@ class TaxoUnlabeledPropertiesModal extends TaxoModal {
         this.listContainer.style.overflowY = "auto";
         
         this.buttons = this.contentEl.createDiv({ cls: "modal-button-container", style: "margin-top: auto;" });
+        
+        new obsidian_1.ButtonComponent(this.buttons)
+            .setButtonText("Auto-label all")
+            .setTooltip("Generate Title Case labels for all unlabeled keys")
+            .onClick(async () => {
+                if (this.unlabeledKeys.length === 0) return;
+                
+                this.plugin.settings.globalPropertyLabels = this.plugin.settings.globalPropertyLabels || {};
+                let added = 0;
+                
+                for (const key of this.unlabeledKeys) {
+                    let text = key;
+                    if (text.startsWith("taxo.")) {
+                        text = text.slice(5);
+                    }
+                    const label = text.replace(/[_-]+/g, " ")
+                        .split(" ")
+                        .filter(Boolean)
+                        .map(w => w.charAt(0).toLocaleUpperCase() + w.slice(1))
+                        .join(" ");
+                        
+                    if (label) {
+                        this.plugin.settings.globalPropertyLabels[key] = label;
+                        added++;
+                    }
+                }
+                
+                if (added > 0) {
+                    this.plugin.refreshFlatSelectors();
+                    await this.plugin.saveSettings();
+                    this.plugin.scheduleLabelRefresh();
+                    
+                    this.unlabeledKeys = [];
+                    this.renderList();
+                    new obsidian_1.Notice(`Auto-assigned labels to ${added} keys.`);
+                }
+            });
+
         new obsidian_1.ButtonComponent(this.buttons).setButtonText("Done").setCta().onClick(() => {
             this.close();
             this.onDone();
@@ -3273,6 +3476,19 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             if (this.settingTab) this.settingTab._selectorOccurrenceMap = null;
             this.scheduleSettingsInventoryRefresh(false);
         }));
+
+        this.addCommand({
+            id: 'save-current-note-to-schema',
+            name: 'Save current note properties to schema',
+            callback: () => {
+                const file = this.app.workspace.getActiveFile();
+                if (!file || file.extension !== 'md') {
+                    new obsidian_1.Notice("No active Markdown file.");
+                    return;
+                }
+                new TaxoSaveNoteToSchemaModal(this.app, this, file).open();
+            }
+        });
     }
     onunload() {
         this.observer?.disconnect();
@@ -3379,6 +3595,38 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                     if (this.getSelector(key)) void this.openSelectorSettings(key);
                     else { this.app?.setting?.open?.(); this.app?.setting?.openTabById?.(this.manifest.id); }
                 });
+
+                const propertyContext = this.propertyTypeMenuContextProperty;
+                if (propertyContext) {
+                    const rawVal = this.getRawPropertyFromContext(propertyContext, key, "properties");
+                    const schemaName = String(Array.isArray(rawVal) ? rawVal[0] : rawVal || "").trim();
+                    
+                    if (schemaName) {
+                        const schemaMenuItem = menu.createDiv({ cls: "menu-item taxoflow-open-schema-menu-item" });
+                        const schemaIcon = schemaMenuItem.createDiv({ cls: "menu-item-icon" });
+                        if (typeof obsidian_1.setIcon === "function") obsidian_1.setIcon(schemaIcon, "file-json"); else schemaIcon.textContent = "📄";
+                        schemaMenuItem.createDiv({ cls: "menu-item-title", text: `Open schema: ${schemaName}` });
+                        
+                        const activateHoverSchema = () => {
+                            menu.querySelectorAll(".menu-item").forEach(item => item.classList.remove("is-selected", "is-focused", "selected"));
+                            schemaMenuItem.classList.add("is-selected");
+                        };
+                        schemaMenuItem.addEventListener("pointerenter", activateHoverSchema);
+                        schemaMenuItem.addEventListener("mousemove", activateHoverSchema);
+                        schemaMenuItem.addEventListener("focusin", activateHoverSchema);
+                        schemaMenuItem.addEventListener("pointerleave", () => schemaMenuItem.classList.remove("is-selected", "is-focused", "selected"));
+                        schemaMenuItem.addEventListener("click", event => {
+                            event.preventDefault(); event.stopPropagation(); menu.remove();
+                            const targetSchema = (this.settings.propertySchemas || []).find(s => s.name.toLocaleLowerCase() === schemaName.toLocaleLowerCase());
+                            if (targetSchema) {
+                                new TaxoSchemaEditorModal(this.app, this, targetSchema, false, () => this.settingTab?.display()).open();
+                            } else {
+                                new obsidian_1.Notice(`Error: No schema found with the name "${schemaName}".`);
+                            }
+                        });
+                    }
+                }
+
                 this.pendingPropertyMenuKey = ""; this.pendingPropertyMenuAt = 0;
             }
             if (!isPropertyMenu) continue;
