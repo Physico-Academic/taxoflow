@@ -719,7 +719,7 @@ class TaxoCreateProfileModal extends TaxoModal {
 
 const { SuggestModal, Notice } = require("obsidian");
 
-class TaxoGlobalSearchModal extends SuggestModal {
+class TaxoGlobalSearchModal extends obsidian_1.SuggestModal {
     constructor(app, plugin) {
         super(app);
         this.plugin = plugin;
@@ -827,7 +827,7 @@ class TaxoGlobalSearchModal extends SuggestModal {
     async onChooseSuggestion(item, evt) {
         const file = this.app.workspace.getActiveFile();
         if (!file) {
-            new Notice("No active file to apply properties to.");
+            new obsidian_1.Notice("No active file to apply properties to.");
             return;
         }
 
