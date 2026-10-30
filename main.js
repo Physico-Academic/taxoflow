@@ -2340,6 +2340,28 @@ class TaxoSchemaApplyConfirmModal extends TaxoModal {
                             fm[prop.key] = prop.isList ? parseOptionList(prop.defaultValue) : String(prop.defaultValue || "").trim();
                         }
                     }
+                    
+                    const newAdditions = this.plugin.computeMissingChildren(fm);
+                    if (newAdditions.length > 0) {
+                        const temp = { ...fm };
+                        const currentKeys = Object.keys(fm);
+                        for (const k of currentKeys) delete fm[k];
+                        
+                        const finalKeys = [...currentKeys];
+                        const insertOffsets = new Map();
+                        for (const addition of newAdditions) {
+                            const parentIdx = finalKeys.indexOf(addition.insertAfter);
+                            if (parentIdx !== -1) {
+                                const offset = (insertOffsets.get(addition.insertAfter) || 1);
+                                finalKeys.splice(parentIdx + offset, 0, addition.key);
+                                insertOffsets.set(addition.insertAfter, offset + 1);
+                            } else {
+                                finalKeys.push(addition.key);
+                            }
+                            temp[addition.key] = addition.defaultValue;
+                        }
+                        for (const k of finalKeys) fm[k] = temp[k];
+                    }
                 });
                 new obsidian_1.Notice(`Applied "${this.schema.name}" schema to note.`);
             } catch (error) {
@@ -4532,6 +4554,44 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         try { return await queued; }
         finally { if (this.fileWriteQueues.get(path) === queued) this.fileWriteQueues.delete(path); }
     }
+    computeMissingChildren(fm) {
+        const additions = [];
+        const allSelectors = (this.settings.profiles || []).flatMap(p => p.selectors || []);
+        
+        for (const selector of allSelectors) {
+            if (Object.prototype.hasOwnProperty.call(fm, selector.name)) continue;
+            
+            const deps = normalizeDependsOn(selector.dependsOn);
+            if (!deps.length) continue;
+            
+            const options = this.getOptionsForFrontmatter(selector, fm);
+            if (options.length > 0) {
+                let insertAfter = deps[0];
+                let maxIndex = -1;
+                const fmKeys = Object.keys(fm);
+                
+                for (const dep of deps) {
+                    const idx = fmKeys.indexOf(dep);
+                    if (idx > maxIndex) {
+                        maxIndex = idx;
+                        insertAfter = dep;
+                    }
+                }
+                
+                if (maxIndex !== -1) {
+                    let coreType = this.getCorePropertyType(selector.name);
+                    const isList = coreType === "list";
+                    const defaultValue = isList 
+                        ? (selector.defaultValue ? [selector.defaultValue] : []) 
+                        : (selector.defaultValue || "");
+                    
+                    additions.push({ key: selector.name, insertAfter, defaultValue });
+                }
+            }
+        }
+        return additions;
+    }
+
     async reconcileDependentValuesForFile(file) {
         if (!(file instanceof obsidian_1.TFile) || file.extension !== "md") return { changed: 0 };
         const inFlight = this.dependentReconcileQueues.get(file.path);
@@ -4541,8 +4601,12 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             try { frontmatter = this.readFrontmatterFromRaw(await this.app.vault.cachedRead(file)); }
             catch (error) { console.warn("TaxoFlow Properties: could not read note for dependency reconciliation", file.path, error); return { changed: 0, errors: 1 }; }
             if (!frontmatter) return { changed: 0, errors: 0 };
+            
             const predicted = this.computeDependentValueChanges(frontmatter);
-            if (!predicted.length) return { changed: 0, errors: 0 };
+            const missingChildren = this.computeMissingChildren(frontmatter);
+            
+            if (!predicted.length && !missingChildren.length) return { changed: 0, errors: 0 };
+            
             const optimisticEntries = new Map();
             for (const change of predicted) {
                 optimisticEntries.set(change.key, this.setOptimisticPropertyValue(file, change.key, change.value));
@@ -4554,6 +4618,7 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             const queued = previous.catch(() => undefined).then(async () => {
                 await this.processFrontMatterSerialized(file, fm => {
                     if (!fm || typeof fm !== "object") return;
+                    
                     const changes = this.computeDependentValueChanges(fm);
                     for (const change of changes) {
                         fm[change.key] = Array.isArray(change.value) ? [...change.value] : change.value;
@@ -4564,6 +4629,30 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                             if (this.optimisticPropertyValues.get(mapKey) === entry) { entry.value = Array.isArray(change.value) ? [...change.value] : change.value; entry.at = Date.now(); }
                         }
                     }
+                    
+                    const newAdditions = this.computeMissingChildren(fm);
+                    if (newAdditions.length > 0) {
+                        const temp = { ...fm };
+                        const currentKeys = Object.keys(fm);
+                        for (const k of currentKeys) delete fm[k];
+                        
+                        const finalKeys = [...currentKeys];
+                        const insertOffsets = new Map();
+                        for (const addition of newAdditions) {
+                            const parentIdx = finalKeys.indexOf(addition.insertAfter);
+                            if (parentIdx !== -1) {
+                                const offset = (insertOffsets.get(addition.insertAfter) || 1);
+                                finalKeys.splice(parentIdx + offset, 0, addition.key);
+                                insertOffsets.set(addition.insertAfter, offset + 1);
+                            } else {
+                                finalKeys.push(addition.key);
+                            }
+                            temp[addition.key] = addition.defaultValue;
+                            applied++;
+                        }
+                        
+                        for (const k of finalKeys) fm[k] = temp[k];
+                    }
                 });
             });
             this.selectorWriteQueues.set(queuedKey, queued);
@@ -4572,6 +4661,7 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                 this.reconcileOptimisticValuesForFile(file);
                 if (applied > 0) this.markSelectorOccurrencePathDirty(file);
                 for (const change of predicted) this.refreshOpenSuggestions(change.key);
+                for (const addition of missingChildren) this.refreshOpenSuggestions(addition.key);
                 return { changed: applied, errors: 0 };
             } catch (error) {
                 for (const change of predicted) {
