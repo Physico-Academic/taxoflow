@@ -718,8 +718,8 @@ class TaxoCreateProfileModal extends TaxoModal {
 }
 
 const { SuggestModal, Notice } = require("obsidian");
-
-class TaxoGlobalSearchModal extends obsidian_1.SuggestModal {
+const SuggestModalClass = obsidian_1.SuggestModal || obsidian_1.Modal;
+class TaxoGlobalSearchModal extends SuggestModalClass {
     constructor(app, plugin) {
         super(app);
         this.plugin = plugin;
