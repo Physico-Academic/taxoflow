@@ -2596,9 +2596,129 @@ class TaxoSchemaEditorModal extends TaxoModal {
                 valInput.addEventListener("input", e => prop.defaultValue = e.target.value);
             }
 
-            const actions = row.createDiv();
+            const actions = row.createDiv({ attr: { style: "display: flex; gap: 4px; align-items: center; justify-content: flex-end; height: 100%;" } });
+
+            
+            new obsidian_1.ButtonComponent(actions)
+                .setIcon("corner-left-up")
+                .setTooltip("Inject parent properties")
+                .onClick(() => {
+                    const propKey = prop.key;
+                    if (!propKey) {
+                        new obsidian_1.Notice("Enter a property key first.");
+                        return;
+                    }
+
+                    const parseOpts = (val) => {
+                        if (typeof val === "string") return val.split(",").map(s => s.trim()).filter(Boolean);
+                        if (Array.isArray(val)) return val.map(s => String(s).trim()).filter(Boolean);
+                        return [];
+                    };
+
+                    const requiredValues = new Map();
+                    requiredValues.set(propKey, new Set(parseOpts(prop.defaultValue)));
+                    
+                    const queue = [propKey];
+                    const resolved = new Set();
+                    
+                    while (queue.length > 0) {
+                        const currentKey = queue.shift();
+                        if (resolved.has(currentKey)) continue;
+                        resolved.add(currentKey);
+                        
+                        const selector = this.plugin.getSelector(currentKey);
+                        if (!selector) continue;
+                        
+                        const currentVals = Array.from(requiredValues.get(currentKey) || []);
+                        let matchingRules = selector.rules || [];
+                        
+                        if (currentVals.length > 0) {
+                            const matched = matchingRules.filter(r => (r.options || []).some(opt => currentVals.includes(opt)));
+                            if (matched.length > 0) matchingRules = matched;
+                        }
+                        
+                        const deps = Array.isArray(selector.dependsOn) ? selector.dependsOn : (typeof selector.dependsOn === "string" ? selector.dependsOn.split(",") : []);
+                        const normalizedDeps = deps.map(s => s.trim()).filter(Boolean);
+
+                        for (const dep of normalizedDeps) {
+                            if (!requiredValues.has(dep)) requiredValues.set(dep, new Set());
+                            
+                            for (const rule of matchingRules) {
+                                if (rule.when && rule.when[dep]) {
+                                    const depVals = Array.isArray(rule.when[dep]) ? rule.when[dep] : [rule.when[dep]];
+                                    depVals.forEach(v => {
+                                        const cleanV = typeof v === "string" ? v.trim() : String(v || "").trim();
+                                        if (cleanV) requiredValues.get(dep).add(cleanV);
+                                    });
+                                }
+                            }
+                            queue.push(dep);
+                        }
+                    }
+
+                    const ancestors = [];
+                    const visited = new Set();
+                    
+                    const dfs = (k) => {
+                        if (visited.has(k)) return;
+                        visited.add(k);
+                        const selector = this.plugin.getSelector(k);
+                        if (selector) {
+                            const deps = Array.isArray(selector.dependsOn) ? selector.dependsOn : (typeof selector.dependsOn === "string" ? selector.dependsOn.split(",") : []);
+                            const normalizedDeps = deps.map(s => s.trim()).filter(Boolean);
+                            for (const dep of normalizedDeps) dfs(dep);
+                        }
+                        if (k !== propKey) ancestors.push(k);
+                    };
+                    dfs(propKey);
+                    
+                    if (ancestors.length === 0) {
+                        new obsidian_1.Notice("No parent properties found.");
+                        return;
+                    }
+                    
+                    let addedCount = 0;
+                    let updatedCount = 0;
+                    const newProps = [];
+                    
+                    for (const depKey of ancestors) {
+                        const vals = Array.from(requiredValues.get(depKey) || []);
+                        const defaultValue = vals.join(", ");
+                        const shouldBeList = vals.length > 1;
+
+                        const existingProp = this.schema.properties.find(p => p.key === depKey);
+                        if (existingProp) {
+                            if (existingProp.defaultValue !== defaultValue || existingProp.isList !== shouldBeList) {
+                                existingProp.defaultValue = defaultValue;
+                                existingProp.isList = shouldBeList;
+                                updatedCount++;
+                            }
+                        } else {
+                            newProps.push({
+                                key: depKey,
+                                defaultValue: defaultValue,
+                                isList: shouldBeList
+                            });
+                            addedCount++;
+                        }
+                    }
+                    
+                    if (addedCount > 0) {
+                        const currentIndex = this.schema.properties.indexOf(prop);
+                        const insertIndex = currentIndex > -1 ? currentIndex : this.schema.properties.length;
+                        this.schema.properties.splice(insertIndex, 0, ...newProps);
+                    }
+                    
+                    if (addedCount > 0 || updatedCount > 0) {
+                        this.render();
+                        new obsidian_1.Notice(`Injected ${addedCount} and updated ${updatedCount} parent property/properties.`);
+                    } else {
+                        new obsidian_1.Notice("All parent properties are already present and up to date.");
+                    }
+                });
+
             if (isCondition) {
-                const lockContainer = actions.createDiv({ attr: { style: "display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted);" } });
+                const lockContainer = actions.createDiv({ attr: { style: "display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); padding: 0 4px;" } });
                 obsidian_1.setIcon(lockContainer, "lock");
                 lockContainer.setAttribute("aria-label", "Managed in Conditions");
             } else {
