@@ -2304,6 +2304,32 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
     }
 }
 
+class CreateSchemaConfirmationModal extends TaxoModal {
+    constructor(app, propertyValue, onConfirm) {
+        super(app, `Create new schema for ${propertyValue}`, "This property value does not have a schema yet. Would you like to create one now?");
+        this.propertyValue = propertyValue;
+        this.onConfirm = onConfirm;
+    }
+
+    onOpen() {
+        super.onOpen();
+        
+        const buttons = this.contentEl.createDiv({ cls: "modal-button-container", style: "margin-top: 24px;" });
+        
+        new obsidian_1.ButtonComponent(buttons)
+            .setButtonText("No")
+            .onClick(() => this.close());
+            
+        new obsidian_1.ButtonComponent(buttons)
+            .setButtonText("Yes")
+            .setCta()
+            .onClick(() => {
+                this.onConfirm();
+                this.close();
+            });
+    }
+}
+
 class TaxoSchemaApplyConfirmModal extends TaxoModal {
     constructor(app, plugin, schema, file) {
         super(app, "Apply Property Schema?", `Note matched conditions for "${schema.name}".`);
@@ -2736,24 +2762,44 @@ class TaxoSchemaEditorModal extends TaxoModal {
             }));
 
         const buttons = this.contentEl.createDiv({ cls: "modal-button-container", style: "margin-top: 24px;" });
-        new obsidian_1.ButtonComponent(buttons).setButtonText("Cancel").onClick(() => this.close());
-        new obsidian_1.ButtonComponent(buttons).setButtonText("Save Schema").setCta().onClick(async () => {
-            if (!this.schema.name) return new obsidian_1.Notice("Schema name is required.");
-            
-            this.schema.conditions = this.schema.conditions.filter(c => c.key.trim() !== "");
-            if (this.schema.conditions.length === 0) return new obsidian_1.Notice("At least one valid condition is required.");
+        
+        new obsidian_1.ButtonComponent(buttons)
+            .setButtonText("Cancel")
+            .onClick(() => this.close());
 
-            if (this.isNew) {
-                this.plugin.settings.propertySchemas = this.plugin.settings.propertySchemas || [];
-                this.plugin.settings.propertySchemas.push(this.schema);
-            } else {
-                const index = this.plugin.settings.propertySchemas.findIndex(s => s.id === this.schema.id);
-                if (index > -1) this.plugin.settings.propertySchemas[index] = this.schema;
-            }
-            await this.plugin.saveSettings();
-            this.close();
-            this.onSaved();
-        });
+        if (!this.isNew) {
+            new obsidian_1.ButtonComponent(buttons)
+                .setButtonText("Delete Schema")
+                .setWarning()
+                .onClick(async () => {
+                    this.plugin.settings.propertySchemas = (this.plugin.settings.propertySchemas || []).filter(s => s.id !== this.schema.id);
+                    await this.plugin.saveSettings();
+                    new obsidian_1.Notice(`Deleted schema: ${this.schema.name}`);
+                    this.close();
+                    this.onSaved();
+                });
+        }
+
+        new obsidian_1.ButtonComponent(buttons)
+            .setButtonText("Save Schema")
+            .setCta()
+            .onClick(async () => {
+                if (!this.schema.name) return new obsidian_1.Notice("Schema name is required.");
+                
+                this.schema.conditions = this.schema.conditions.filter(c => c.key.trim() !== "");
+                if (this.schema.conditions.length === 0) return new obsidian_1.Notice("At least one valid condition is required.");
+
+                if (this.isNew) {
+                    this.plugin.settings.propertySchemas = this.plugin.settings.propertySchemas || [];
+                    this.plugin.settings.propertySchemas.push(this.schema);
+                } else {
+                    const index = this.plugin.settings.propertySchemas.findIndex(s => s.id === this.schema.id);
+                    if (index > -1) this.plugin.settings.propertySchemas[index] = this.schema;
+                }
+                await this.plugin.saveSettings();
+                this.close();
+                this.onSaved();
+            });
         
         this.installModalDrag(heading);
         this.contentEl.scrollTop = currentScroll;
@@ -3974,11 +4020,81 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                         schemaMenuItem.addEventListener("pointerleave", () => schemaMenuItem.classList.remove("is-selected", "is-focused", "selected"));
                         schemaMenuItem.addEventListener("click", event => {
                             event.preventDefault(); event.stopPropagation(); menu.remove();
-                            const targetSchema = (this.settings.propertySchemas || []).find(s => s.name.toLocaleLowerCase() === schemaName.toLocaleLowerCase());
-                            if (targetSchema) {
-                                new TaxoSchemaEditorModal(this.app, this, targetSchema, false, () => this.settingTab?.display()).open();
+                            
+                            const valuesArray = Array.isArray(rawVal) ? rawVal : [rawVal];
+                            let schemaNameBase = valuesArray.filter(Boolean).join(", ");
+                            if (!schemaNameBase) schemaNameBase = "Unnamed Value";
+
+                            const existingSchema = (this.settings.propertySchemas || []).find(s => s.name.toLocaleLowerCase() === schemaNameBase.toLocaleLowerCase());
+
+                            if (existingSchema) {
+                                new TaxoSchemaEditorModal(this.app, this, existingSchema, false, () => {
+                                    this.settingTab?.display();
+                                }).open();
                             } else {
-                                new obsidian_1.Notice(`Error: No schema found with the name "${schemaName}".`);
+                                new CreateSchemaConfirmationModal(this.app, schemaNameBase, async () => {
+                                    
+                                    let uniqueName = schemaNameBase;
+                                    let counter = 1;
+                                    while ((this.settings.propertySchemas || []).some(s => s.name.toLocaleLowerCase() === uniqueName.toLocaleLowerCase())) {
+                                        uniqueName = `${schemaNameBase} (${counter})`;
+                                        counter++;
+                                    }
+
+                                    const activeProfileObj = this.getProfileForPropertyKey(key) || this.getActiveProfile();
+                                    const selectors = activeProfileObj ? activeProfileObj.selectors : [];
+                                    
+                                    const ancestors = new Set();
+                                    const getAncestors = (currentKey) => {
+                                        const selector = selectors.find(s => s.name === currentKey);
+                                        if (selector && selector.dependsOn) {
+                                            const deps = Array.isArray(selector.dependsOn) ? selector.dependsOn : (typeof selector.dependsOn === "string" ? selector.dependsOn.split(",") : []);
+                                            for (const dep of deps) {
+                                                const cleanDep = dep.trim();
+                                                if (cleanDep && !ancestors.has(cleanDep)) {
+                                                    ancestors.add(cleanDep);
+                                                    getAncestors(cleanDep);
+                                                }
+                                            }
+                                        }
+                                    };
+                                    getAncestors(key);
+
+                                    const conditions = [];
+                                    const keysToCheck = [key, ...Array.from(ancestors)];
+
+                                    for (const k of keysToCheck) {
+                                        const val = this.getPropertyValuesFromContext(propertyContext, k, "properties"); 
+                                        
+                                        if (val !== null && val !== undefined && val !== "") {
+                                            if (Array.isArray(val) && val.length === 0) continue;
+                                            
+                                            conditions.push({
+                                                key: k,
+                                                value: Array.isArray(val) ? val.join(", ") : String(val)
+                                            });
+                                        }
+                                    }
+
+                                    const newSchema = {
+                                        id: Date.now().toString(),
+                                        name: uniqueName,
+                                        matchType: "ALL",
+                                        conditions: conditions,
+                                        properties: []
+                                    };
+
+                                    this.settings.propertySchemas = this.settings.propertySchemas || [];
+                                    this.settings.propertySchemas.push(newSchema);
+                                    await this.saveSettings();
+                                    
+                                    new obsidian_1.Notice(`Created schema: ${uniqueName}`);
+                                    
+                                    new TaxoSchemaEditorModal(this.app, this, newSchema, false, () => {
+                                        this.settingTab?.display();
+                                    }).open();
+                                    
+                                }).open();
                             }
                         });
                     }
@@ -5749,14 +5865,29 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         if (!this.contextIsComplete(selector, context, mode)) return;
 
         if (dependencies.length && available.length === 0) return;
+        
         if (!dependencies.length) {
             if (!selector.options.includes(candidate)) selector.options.push(candidate);
         } else {
             const actual = {}; for (const dep of dependencies) actual[dep] = stableValues(this.getPropertyValuesFromContext(context, dep, mode));
-            const signature = JSON.stringify(Object.keys(actual).sort().map(k => [k, actual[k]]));
-            let record = (selector.customOptionsByContext || []).find(entry => JSON.stringify(Object.keys(entry.context || {}).sort().map(k => [k, stableValues(entry.context[k])])) === signature);
-            if (!record) { record = { context: actual, options: [] }; selector.customOptionsByContext = selector.customOptionsByContext || []; selector.customOptionsByContext.push(record); }
-            if (!record.options.includes(candidate)) record.options.push(candidate);
+            let bestRaw = null;
+            let tiesRaw = [];
+            for (const rawRule of selector.rules || []) {
+                if (!this.ruleMatches(rawRule, actual, dependencies)) continue;
+                if (!bestRaw) { bestRaw = rawRule; tiesRaw.push(rawRule); continue; }
+                const cmp = compareSpecificity(rawRule, bestRaw);
+                if (cmp < 0) { bestRaw = rawRule; tiesRaw = [rawRule]; }
+                else if (cmp === 0) { tiesRaw.push(rawRule); }
+            }
+            if (bestRaw) {
+                for (const rawRule of tiesRaw) {
+                    const currentOptions = parseOptionList(rawRule.options);
+                    if (!currentOptions.includes(candidate)) {
+                        currentOptions.push(candidate);
+                        rawRule.options = currentOptions;
+                    }
+                }
+            }
         }
         this.invalidateRuntimeCaches();
         await this.saveSettings();
