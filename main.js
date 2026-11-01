@@ -1509,6 +1509,7 @@ class TaxoSaveNoteToSchemaModal extends TaxoModal {
         this.plugin = plugin;
         this.file = file;
         this.searchQuery = "";
+        this._schemaDisplayLimit = 20;  
     }
     onOpen() {
         super.onOpen();
@@ -1558,6 +1559,7 @@ class TaxoSaveNoteToSchemaModal extends TaxoModal {
         new obsidian_1.Setting(this.contentEl).addSearch(search => {
             search.setPlaceholder("Search existing schemas...").onChange(v => {
                 this.searchQuery = v.trim().toLocaleLowerCase();
+                this._schemaDisplayLimit = 20;
                 this.renderList(currentProps);
             });
         });
@@ -1578,7 +1580,10 @@ class TaxoSaveNoteToSchemaModal extends TaxoModal {
             return;
         }
         
-        for (const schema of filtered) {
+        const limit = this._schemaDisplayLimit || 20;
+        const toRender = filtered.slice(0, limit);
+        
+        for (const schema of toRender) {
             const row = new obsidian_1.Setting(this.listContainer)
                 .setName(schema.name)
                 .setDesc(`${schema.properties.length} existing actions`)
@@ -1598,6 +1603,16 @@ class TaxoSaveNoteToSchemaModal extends TaxoModal {
                 }));
             row.settingEl.style.borderBottom = "1px solid var(--background-modifier-border)";
         }
+
+        if (filtered.length > limit) {
+            const btnContainer = this.listContainer.createDiv({ attr: { style: "display: flex; justify-content: center; padding: 12px 0;" } });
+            new obsidian_1.ButtonComponent(btnContainer)
+                .setButtonText(`Show more (${filtered.length - limit} remaining)`)
+                .onClick(() => {
+                    this._schemaDisplayLimit += 20;
+                    this.renderList(currentProps);
+                });
+        }
     }
 }
 class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
@@ -1607,6 +1622,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         this._displayedProfileId = null;
         this._searchQuery = "";
         this._schemaSearchQuery = "";
+        this._schemaDisplayLimit = 20;
         this._collapsedStateBySelector = new Map();
         this._sectionCollapsed = { activeProfile: false, properties: false, schemas: false, globalDefaults: false, extraLabels: true, orphans: false, maintenance: true };
         this._orphanCategoryCollapsed = { noProfile: true, profileMissing: true };
@@ -1850,15 +1866,15 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         textContainer.appendChild(heading.descEl);
         heading.infoEl.prepend(textContainer);
 
+        this._schemaListContainer = body.createDiv({ cls: "taxoflow-schema-list-container" });
+
         heading.addSearch(search => {
             search.setPlaceholder("Search schemas…").setValue(this._schemaSearchQuery || "");
             search.inputEl.addClass("taxoflow-property-search");
             search.onChange(value => {
                 this._schemaSearchQuery = value.trim().toLocaleLowerCase();
-                body.querySelectorAll(".taxoflow-schema-row").forEach(row => {
-                    const name = (row.dataset.schemaName || "").toLocaleLowerCase();
-                    row.style.display = (!this._schemaSearchQuery || name.includes(this._schemaSearchQuery)) ? "" : "none";
-                });
+                this._schemaDisplayLimit = 20;
+                this.updateSchemaList();
             });
         });
         
@@ -1879,14 +1895,29 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
                 });
         });
 
-        const schemas = this.plugin.settings.propertySchemas || [];
-        if (schemas.length === 0) {
-            body.createEl("p", { text: "No schemas configured. Click '+' to create one.", cls: "setting-item-description" });
+        this.updateSchemaList();
+    }
+
+    updateSchemaList() {
+        const container = this._schemaListContainer;
+        if (!container) return;
+        container.empty();
+
+        const allSchemas = this.plugin.settings.propertySchemas || [];
+        const query = (this._schemaSearchQuery || "").toLocaleLowerCase();
+        
+        const filtered = allSchemas.filter(s => !query || s.name.toLocaleLowerCase().includes(query));
+
+        if (filtered.length === 0) {
+            container.createEl("p", { text: query ? "No schemas match your search." : "No schemas configured. Click '+' to create one.", cls: "setting-item-description" });
             return;
         }
 
-        for (const schema of schemas) {
-            const row = new obsidian_1.Setting(body)
+        const limit = this._schemaDisplayLimit || 20;
+        const toRender = filtered.slice(0, limit);
+
+        for (const schema of toRender) {
+            const row = new obsidian_1.Setting(container)
                 .setName(schema.name)
                 .setDesc(`Triggers when "${schema.triggerKey || (schema.conditions?.[0]?.key)}" is matched. Injects ${schema.properties.length} properties.`)
                 .addButton(b => b.setIcon("pencil").setTooltip("Edit schema").onClick(() => {
@@ -1900,9 +1931,16 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
                 
             row.settingEl.addClass("taxoflow-schema-row");
             row.settingEl.dataset.schemaName = schema.name;
-            if (this._schemaSearchQuery && !schema.name.toLocaleLowerCase().includes(this._schemaSearchQuery)) {
-                row.settingEl.style.display = "none";
-            }
+        }
+
+        if (filtered.length > limit) {
+            const btnContainer = container.createDiv({ attr: { style: "display: flex; justify-content: center; margin-top: 12px; margin-bottom: 12px;" } });
+            new obsidian_1.ButtonComponent(btnContainer)
+                .setButtonText(`Show more (${filtered.length - limit} remaining)`)
+                .onClick(() => {
+                    this._schemaDisplayLimit += 20;
+                    this.updateSchemaList();
+                });
         }
     }
 
