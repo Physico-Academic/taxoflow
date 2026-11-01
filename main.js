@@ -4228,6 +4228,129 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                                 }).open();
                             }
                         });
+
+                        const applySchemaMenuItem = menu.createDiv({ cls: "menu-item taxoflow-apply-schema-menu-item" });
+                        const applySchemaIcon = applySchemaMenuItem.createDiv({ cls: "menu-item-icon" });
+                        if (typeof obsidian_1.setIcon === "function") obsidian_1.setIcon(applySchemaIcon, "check-square"); else applySchemaIcon.textContent = "☑";
+                        applySchemaMenuItem.createDiv({ cls: "menu-item-title", text: `Apply Scheme of :${schemaName}` });
+                        
+                        const activateHoverApplySchema = () => {
+                            menu.querySelectorAll(".menu-item").forEach(item => item.classList.remove("is-selected", "is-focused", "selected"));
+                            applySchemaMenuItem.classList.add("selected", "is-selected");
+                        };
+                        applySchemaMenuItem.addEventListener("pointerenter", activateHoverApplySchema);
+                        applySchemaMenuItem.addEventListener("mousemove", activateHoverApplySchema);
+                        applySchemaMenuItem.addEventListener("focusin", activateHoverApplySchema);
+                        applySchemaMenuItem.addEventListener("pointerleave", () => applySchemaMenuItem.classList.remove("selected", "is-selected", "is-focused"));
+                        applySchemaMenuItem.addEventListener("click", async event => {
+                            event.preventDefault(); event.stopPropagation(); menu.remove();
+                            
+                            const file = this.app.workspace.getActiveFile();
+                            if (!file) {
+                                new obsidian_1.Notice("No active file to apply schema to.");
+                                return;
+                            }
+
+                            const valuesArray = Array.isArray(rawVal) ? rawVal : [rawVal];
+                            let schemaNameBase = valuesArray.filter(Boolean).join(", ");
+                            if (!schemaNameBase) schemaNameBase = "Unnamed Value";
+
+                            const existingSchema = (this.settings.propertySchemas || []).find(s => s.name.toLocaleLowerCase() === schemaNameBase.toLocaleLowerCase());
+
+                            this.isApplyingSchema = true;
+                            try {
+                                await this.processFrontMatterSerialized(file, fm => {
+                                    if (existingSchema) {
+                                        const preserved = {};
+                                        for (const cond of existingSchema.conditions) {
+                                            if (fm[cond.key] !== undefined) preserved[cond.key] = fm[cond.key];
+                                        }
+                                        
+                                        for (const k of Object.keys(fm)) delete fm[k];
+                                        
+                                        for (const prop of existingSchema.properties) {
+                                            if (preserved[prop.key] !== undefined) {
+                                                fm[prop.key] = preserved[prop.key];
+                                            } else {
+                                                fm[prop.key] = prop.isList ? parseOptionList(prop.defaultValue) : String(prop.defaultValue || "").trim();
+                                            }
+                                        }
+                                        
+                                        const newAdditions = this.computeMissingChildren(fm);
+                                        if (newAdditions.length > 0) {
+                                            const temp = { ...fm };
+                                            const currentKeys = Object.keys(fm);
+                                            for (const k of currentKeys) delete fm[k];
+                                            
+                                            const finalKeys = [...currentKeys];
+                                            const insertOffsets = new Map();
+                                            for (const addition of newAdditions) {
+                                                const parentIdx = finalKeys.indexOf(addition.insertAfter);
+                                                if (parentIdx !== -1) {
+                                                    const offset = (insertOffsets.get(addition.insertAfter) || 1);
+                                                    finalKeys.splice(parentIdx + offset, 0, addition.key);
+                                                    insertOffsets.set(addition.insertAfter, offset + 1);
+                                                } else {
+                                                    finalKeys.push(addition.key);
+                                                }
+                                                temp[addition.key] = addition.defaultValue;
+                                            }
+                                            for (const k of finalKeys) fm[k] = temp[k];
+                                        }
+                                    } else {
+                                        const activeProfileObj = this.getProfileForPropertyKey(key) || this.getActiveProfile();
+                                        const selectors = activeProfileObj ? activeProfileObj.selectors : [];
+                                        
+                                        const ancestors = new Set();
+                                        const getAncestors = (currentKey) => {
+                                            const selector = selectors.find(s => s.name === currentKey);
+                                            if (selector && selector.dependsOn) {
+                                                const deps = Array.isArray(selector.dependsOn) ? selector.dependsOn : (typeof selector.dependsOn === "string" ? selector.dependsOn.split(",") : []);
+                                                for (const dep of deps) {
+                                                    const cleanDep = dep.trim();
+                                                    if (cleanDep && !ancestors.has(cleanDep)) {
+                                                        ancestors.add(cleanDep);
+                                                        getAncestors(cleanDep);
+                                                    }
+                                                }
+                                            }
+                                        };
+                                        getAncestors(key);
+
+                                        const immediateChildren = new Set();
+                                        for (const s of selectors) {
+                                            const deps = Array.isArray(s.dependsOn) ? s.dependsOn : (typeof s.dependsOn === "string" ? s.dependsOn.split(",") : []);
+                                            if (deps.map(d => d.trim()).includes(key)) {
+                                                immediateChildren.add(s.name);
+                                            }
+                                        }
+
+                                        const preservedKeys = new Set([key, ...Array.from(ancestors)]);
+                                        
+                                        for (const childKey of immediateChildren) {
+                                            if (fm[childKey] !== undefined) {
+                                                preservedKeys.add(childKey);
+                                            }
+                                        }
+
+                                        const newFm = {};
+                                        for (const k of Object.keys(fm)) {
+                                            if (preservedKeys.has(k)) {
+                                                newFm[k] = fm[k];
+                                            }
+                                        }
+                                        
+                                        for (const k of Object.keys(fm)) delete fm[k];
+                                        for (const k of Object.keys(newFm)) fm[k] = newFm[k];
+                                    }
+                                });
+                                new obsidian_1.Notice(`Applied scheme of :${schemaNameBase}`);
+                            } catch (error) {
+                                new obsidian_1.Notice(`Failed to apply scheme: ${error?.message || error}`);
+                            } finally {
+                                window.setTimeout(() => { this.isApplyingSchema = false; }, 500);
+                            }
+                        });
                     }
                 }
 
