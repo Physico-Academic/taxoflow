@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const obsidian_1 = require("obsidian");
 
 const TAXOFLOW_PROPERTY_PREFIX = "taxo.";
-const DEFAULT_SETTINGS = { profiles: [], activeProfileId: "", suppressedAutoRegistrationKeys: [], universalExcludedFolders: [], propertySchemas: [], globalPropertyLabels: {} };
+const DEFAULT_SETTINGS = { profiles: [], activeProfileId: "", suppressedAutoRegistrationKeys: [], universalExcludedFolders: [], propertySchemas: [], globalDefaultProperties: [], globalPropertyLabels: {} };
 function stripPropertyRootPrefix(value) {
     const text = String(value || "");
     return text.startsWith(TAXOFLOW_PROPERTY_PREFIX) ? text.slice(TAXOFLOW_PROPERTY_PREFIX.length) : text;
@@ -219,6 +219,7 @@ function normalizeSavedSettings(saved) {
     ))) migrated = true;
 
     const globalPropertyLabels = saved?.globalPropertyLabels || {};
+    const globalDefaultProperties = Array.isArray(saved?.globalDefaultProperties) ? saved.globalDefaultProperties : [];
 
     const profiles = savedProfiles.map(profile => {
         const p = normalizeProfile(profile);
@@ -248,12 +249,11 @@ function normalizeSavedSettings(saved) {
     });
     
     return {
-        settings: { profiles, activeProfileId, suppressedAutoRegistrationKeys, universalExcludedFolders, propertySchemas, globalPropertyLabels },
+        settings: { profiles, activeProfileId, suppressedAutoRegistrationKeys, universalExcludedFolders, propertySchemas, globalDefaultProperties, globalPropertyLabels },
         migrated: migrated && !unsupportedFlatSchema,
         unsupportedFlatSchema,
     };
 }
-
 function ruleLogic(rule) { return String(rule?.logic || "and").toLocaleLowerCase() === "or" ? "or" : "and"; }
 function ruleSpecificity(rule) {
     const entries = Object.entries(rule?.when || {}).filter(([, vals]) => parseOptionList(vals).length > 0);
@@ -1608,7 +1608,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         this._searchQuery = "";
         this._schemaSearchQuery = "";
         this._collapsedStateBySelector = new Map();
-        this._sectionCollapsed = { activeProfile: false, properties: false, extraLabels: true, orphans: false, maintenance: true };
+        this._sectionCollapsed = { activeProfile: false, properties: false, schemas: false, globalDefaults: false, extraLabels: true, orphans: false, maintenance: true };
         this._orphanCategoryCollapsed = { noProfile: true, profileMissing: true };
         this._selectorOccurrenceMap = null;
         this.plugin.settingTab = this;
@@ -1633,6 +1633,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         const groupA = containerEl.createDiv({ cls: "taxoflow-settings-group" });
         const activeSection = groupA.createDiv({ cls: `taxoflow-settings-section taxoflow-active-profile-section${active ? " has-data" : ""}` });
         const activeHeader = new obsidian_1.Setting(activeSection).setName("Active Profile").setDesc(active ? `${active.name} · ${active.namespace}` : "No profile configured. Create your first profile to begin.").setHeading();
+
 
         if (this.plugin.settings.profiles.length) {
             activeHeader.addDropdown(drop => {
@@ -1797,6 +1798,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
 
         const groupB = containerEl.createDiv({ cls: "taxoflow-settings-group" });
         this.renderPropertySchemas(groupB);
+        this.renderGlobalDefaultProperties(groupB);
         this.renderExtraLabels(groupB);
         this.renderOrphans(groupB, this._selectorOccurrenceMap);
         this.renderMaintenance(groupB);
@@ -1902,6 +1904,133 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
                 row.settingEl.style.display = "none";
             }
         }
+    }
+
+    renderGlobalDefaultProperties(containerEl) {
+        const section = containerEl.createDiv({ cls: "taxoflow-settings-section" });
+        
+        const sticky = section.createDiv({ cls: "taxoflow-properties-sticky-header" });
+        const heading = new obsidian_1.Setting(sticky)
+            .setName("Global Default Properties")
+            .setDesc("These properties are automatically injected into every newly created note, unless the key already exists.")
+            .setHeading();
+            
+        const body = section.createDiv({ cls: "taxoflow-properties-body" });
+        let collapsed = this._sectionCollapsed.globalDefaults ?? false;
+        body.hidden = collapsed;
+        section.classList.toggle("is-collapsed", collapsed);
+        sticky.style.borderBottom = collapsed ? "none" : "";
+        
+        const textContainer = createDiv({ cls: 'taxoflow-properties-text-wrapper' });
+        textContainer.style.display = 'flex';
+        textContainer.style.flexDirection = 'column';
+        textContainer.appendChild(heading.nameEl);
+        textContainer.appendChild(heading.descEl);
+        heading.infoEl.prepend(textContainer);
+
+        heading.addExtraButton(button => {
+            button.setIcon(collapsed ? "chevron-right" : "chevron-down")
+                .setTooltip(collapsed ? "Expand Global Defaults" : "Collapse Global Defaults")
+                .onClick(() => {
+                    collapsed = !collapsed;
+                    this._sectionCollapsed.globalDefaults = collapsed;
+                    body.hidden = collapsed;
+                    section.classList.toggle("is-collapsed", collapsed);
+                    sticky.style.borderBottom = collapsed ? "none" : "";
+                    button.setIcon(collapsed ? "chevron-right" : "chevron-down");
+                });
+        });
+
+        if (!this.plugin.settings.globalDefaultProperties) {
+            this.plugin.settings.globalDefaultProperties = [];
+        }
+        const defaults = this.plugin.settings.globalDefaultProperties;
+
+        const tableContainer = body.createDiv({ cls: "taxoflow-schema-table-container", style: "margin-top: 12px;" });
+
+        const renderRows = () => {
+            tableContainer.empty();
+            const tableHeader = tableContainer.createDiv({ cls: "taxoflow-schema-grid then-grid table-header" });
+            tableHeader.createDiv({ text: "" }); 
+            tableHeader.createDiv({ text: "Property Key" });
+            tableHeader.createDiv({ text: "Type" });
+            tableHeader.createDiv({ text: "Default Value" });
+            tableHeader.createDiv({ text: "" });
+
+            if (defaults.length === 0) {
+                tableContainer.createEl("p", { text: "No global default properties configured.", cls: "setting-item-description" });
+            }
+
+            defaults.forEach((prop, i) => {
+                const row = tableContainer.createDiv({ cls: "taxoflow-schema-grid then-grid taxoflow-draggable-row", attr: { draggable: "true" } });
+                
+                const handle = row.createDiv({ cls: "taxoflow-drag-handle" });
+                obsidian_1.setIcon(handle, "grip-vertical");
+
+                row.addEventListener("dragstart", e => {
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", i.toString());
+                    row.classList.add("is-dragging");
+                });
+                row.addEventListener("dragend", () => {
+                    row.classList.remove("is-dragging");
+                    tableContainer.querySelectorAll(".is-drag-over").forEach(el => el.classList.remove("is-drag-over"));
+                });
+                row.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; row.classList.add("is-drag-over"); });
+                row.addEventListener("dragleave", () => row.classList.remove("is-drag-over"));
+                row.addEventListener("drop", async e => {
+                    e.preventDefault();
+                    row.classList.remove("is-drag-over");
+                    const fromIndex = parseInt(e.dataTransfer.getData("text/plain"), 10);
+                    if (fromIndex !== i && !isNaN(fromIndex)) {
+                        const movedItem = defaults.splice(fromIndex, 1)[0];
+                        defaults.splice(i, 0, movedItem);
+                        await this.plugin.saveSettings();
+                        renderRows();
+                    }
+                });
+
+                row.createEl("input", { attr: { type: "text", placeholder: "e.g., tags" }, value: prop.key })
+                    .addEventListener("change", async e => {
+                        prop.key = e.target.value.trim();
+                        await this.plugin.saveSettings();
+                    });
+
+                const typeSelect = row.createEl("select", { cls: "dropdown" });
+                typeSelect.createEl("option", { value: "text", text: "Text" });
+                typeSelect.createEl("option", { value: "list", text: "List" });
+                typeSelect.value = prop.isList ? "list" : "text";
+                typeSelect.addEventListener("change", async e => {
+                    prop.isList = (e.target.value === "list");
+                    await this.plugin.saveSettings();
+                });
+
+                row.createEl("input", { attr: { type: "text", placeholder: "e.g., idea, note" }, value: prop.defaultValue })
+                    .addEventListener("change", async e => {
+                        prop.defaultValue = e.target.value;
+                        await this.plugin.saveSettings();
+                    });
+
+                const actions = row.createDiv({ attr: { style: "display: flex; gap: 4px; align-items: center; justify-content: flex-end; height: 100%;" } });
+                new obsidian_1.ButtonComponent(actions)
+                    .setIcon("trash-2")
+                    .setTooltip("Remove property")
+                    .onClick(async () => {
+                        defaults.splice(i, 1);
+                        await this.plugin.saveSettings();
+                        renderRows();
+                    });
+            });
+        };
+        
+        renderRows();
+
+        new obsidian_1.Setting(body)
+            .addButton(b => b.setButtonText("+ Add property").onClick(async () => {
+                defaults.push({ key: "", defaultValue: "", isList: false });
+                await this.plugin.saveSettings();
+                renderRows();
+            }));
     }
 
     renderOrphans(containerEl, occurrencesByKey = null, scanError = null) {
@@ -3840,7 +3969,9 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             this.scheduleSettingsInventoryRefresh(false);
 
             window.setTimeout(() => {
-                void this.applyConfiguredDefaultsForFile(file).then(() => {
+                void this.applyGlobalDefaultPropertiesForFile(file).then(() => {
+                    return this.applyConfiguredDefaultsForFile(file);
+                }).then(() => {
                     void this.handleAutoFolderForFile(file);
                 }).catch(error => console.error("TaxoFlow Properties: could not initialize defaults in new note", file.path, error));
             }, 220);
@@ -4433,6 +4564,23 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         if (updated) this.scheduleSettingsInventoryRefresh(false);
         return { updated, skipped };
     }
+
+    async applyGlobalDefaultPropertiesForFile(file) {
+        if (!(file instanceof obsidian_1.TFile) || file.extension !== "md") return;
+        const defaults = this.settings.globalDefaultProperties || [];
+        if (!defaults.length) return;
+
+        await this.processFrontMatterSerialized(file, frontmatter => {
+            for (const prop of defaults) {
+                const key = prop.key.trim();
+                if (!key) continue;
+                if (frontmatter[key] === undefined) {
+                    frontmatter[key] = prop.isList ? parseOptionList(prop.defaultValue) : String(prop.defaultValue || "").trim();
+                }
+            }
+        });
+    }
+    
     async getNoteFrontmatterKeys(file) {
         if (!(file instanceof obsidian_1.TFile) || file.extension !== "md") return new Set();
         const keys = new Set(Object.keys(this.app?.metadataCache?.getFileCache?.(file)?.frontmatter || {}));
@@ -5337,6 +5485,7 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             suppressedAutoRegistrationKeys: uniqueStrings(this.settings.suppressedAutoRegistrationKeys || []),
             universalExcludedFolders: uniqueStrings(this.settings.universalExcludedFolders || []),
             propertySchemas: this.settings.propertySchemas || [],
+            globalDefaultProperties: this.settings.globalDefaultProperties || [],
             globalPropertyLabels: this.settings.globalPropertyLabels || {},
             profiles: this.settings.profiles.map(profile => ({
                 id: profile.id, name: profile.name, namespace: profile.namespace,
