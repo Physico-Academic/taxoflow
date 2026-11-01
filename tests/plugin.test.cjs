@@ -50,6 +50,7 @@ const suiteTests = [
     suppressedAutoRegistrationKeys: [],
     universalExcludedFolders: [],
     propertySchemas: [],
+    globalDefaultProperties: [],
     globalPropertyLabels: {}
   })
   ],
@@ -100,6 +101,7 @@ const suiteTests = [
   suppressedAutoRegistrationKeys: [],
   universalExcludedFolders: [],
   propertySchemas: [],
+  globalDefaultProperties: [],
   globalPropertyLabels: {}
   });
   assert.equal(result.unsupportedFlatSchema, false);
