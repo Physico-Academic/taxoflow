@@ -49,6 +49,19 @@ function parseOptionList(value) {
     push();
     return uniqueStrings(result);
 }
+function castPropertyValue(value, type) {
+    if (type === "list" || type === "tags" || type === "aliases") return parseOptionList(value);
+    if (type === "checkbox") {
+        if (typeof value === "boolean") return value;
+        const lower = String(value).trim().toLowerCase();
+        return lower === "true" || lower === "1" || lower === "yes" || lower === "on";
+    }
+    if (type === "number") {
+        const parsed = Number(value);
+        return isNaN(parsed) ? value : parsed;
+    }
+    return String(value || "").trim();
+}
 function normalizeDependsOn(value) {
     return uniqueStrings(Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : []);
 }
@@ -1624,7 +1637,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
         this._schemaSearchQuery = "";
         this._schemaDisplayLimit = 20;
         this._collapsedStateBySelector = new Map();
-        this._sectionCollapsed = { activeProfile: false, properties: false, schemas: false, globalDefaults: false, extraLabels: true, orphans: false, maintenance: true };
+        this._sectionCollapsed = { activeProfile: true, properties: true, schemas: true, globalDefaults: true, extraLabels: true, orphans: true, maintenance: true };
         this._orphanCategoryCollapsed = { noProfile: true, profileMissing: true };
         this._selectorOccurrenceMap = null;
         this.plugin.settingTab = this;
@@ -1988,11 +2001,14 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
 
         const renderRows = () => {
             tableContainer.empty();
-            const tableHeader = tableContainer.createDiv({ cls: "taxoflow-schema-grid then-grid table-header" });
+            const gridStyle = "grid-template-columns: 24px minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) 55px 75px; width: 100%; box-sizing: border-box;";
+            
+            const tableHeader = tableContainer.createDiv({ cls: "taxoflow-schema-grid then-grid table-header", attr: { style: gridStyle } });
             tableHeader.createDiv({ text: "" }); 
             tableHeader.createDiv({ text: "Property Key" });
             tableHeader.createDiv({ text: "Type" });
             tableHeader.createDiv({ text: "Default Value" });
+            tableHeader.createDiv({ text: "Index" });
             tableHeader.createDiv({ text: "" });
 
             if (defaults.length === 0) {
@@ -2000,7 +2016,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
             }
 
             defaults.forEach((prop, i) => {
-                const row = tableContainer.createDiv({ cls: "taxoflow-schema-grid then-grid taxoflow-draggable-row", attr: { draggable: "true" } });
+                const row = tableContainer.createDiv({ cls: "taxoflow-schema-grid then-grid taxoflow-draggable-row", attr: { draggable: "true", style: gridStyle } });
                 
                 const handle = row.createDiv({ cls: "taxoflow-drag-handle" });
                 obsidian_1.setIcon(handle, "grip-vertical");
@@ -2037,9 +2053,14 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
                 const typeSelect = row.createEl("select", { cls: "dropdown" });
                 typeSelect.createEl("option", { value: "text", text: "Text" });
                 typeSelect.createEl("option", { value: "list", text: "List" });
-                typeSelect.value = prop.isList ? "list" : "text";
+                typeSelect.createEl("option", { value: "number", text: "Number" });
+                typeSelect.createEl("option", { value: "checkbox", text: "Checkbox" });
+                typeSelect.createEl("option", { value: "date", text: "Date" });
+                typeSelect.createEl("option", { value: "datetime", text: "Date & Time" });
+                typeSelect.value = prop.type || (prop.isList ? "list" : "text");
                 typeSelect.addEventListener("change", async e => {
-                    prop.isList = (e.target.value === "list");
+                    prop.type = e.target.value;
+                    prop.isList = (prop.type === "list");
                     await this.plugin.saveSettings();
                 });
 
@@ -2049,7 +2070,21 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
                         await this.plugin.saveSettings();
                     });
 
+                row.createEl("input", { attr: { type: "text", placeholder: "1, -1" }, value: String(prop.index || "") })
+                    .addEventListener("change", async e => {
+                        prop.index = e.target.value;
+                        await this.plugin.saveSettings();
+                    });
+
                 const actions = row.createDiv({ attr: { style: "display: flex; gap: 4px; align-items: center; justify-content: flex-end; height: 100%;" } });
+                
+                new obsidian_1.ButtonComponent(actions)
+                    .setIcon("database")
+                    .setTooltip("Inject/Move property in all existing notes")
+                    .onClick(async () => {
+                        await this.plugin.applyGlobalPropertyToAllNotes(prop);
+                    });
+
                 new obsidian_1.ButtonComponent(actions)
                     .setIcon("trash-2")
                     .setTooltip("Remove property")
@@ -2065,7 +2100,7 @@ class TaxoFlowSettingTab extends obsidian_1.PluginSettingTab {
 
         new obsidian_1.Setting(body)
             .addButton(b => b.setButtonText("+ Add property").onClick(async () => {
-                defaults.push({ key: "", defaultValue: "", isList: false });
+                defaults.push({ key: "", defaultValue: "", isList: false, index: "" });
                 await this.plugin.saveSettings();
                 renderRows();
             }));
@@ -2530,7 +2565,7 @@ class TaxoSchemaApplyConfirmModal extends TaxoModal {
                         if (preserved[prop.key] !== undefined) {
                             fm[prop.key] = preserved[prop.key];
                         } else {
-                            fm[prop.key] = prop.isList ? parseOptionList(prop.defaultValue) : String(prop.defaultValue || "").trim();
+                            fm[prop.key] = castPropertyValue(prop.defaultValue, prop.type || (prop.isList ? "list" : "text"));
                         }
                     }
                     
@@ -2773,12 +2808,19 @@ class TaxoSchemaEditorModal extends TaxoModal {
             const typeSelect = row.createEl("select", { cls: "dropdown" });
             typeSelect.createEl("option", { value: "text", text: "Text" });
             typeSelect.createEl("option", { value: "list", text: "List" });
-            typeSelect.value = prop.isList ? "list" : "text";
+            typeSelect.createEl("option", { value: "number", text: "Number" });
+            typeSelect.createEl("option", { value: "checkbox", text: "Checkbox" });
+            typeSelect.createEl("option", { value: "date", text: "Date" });
+            typeSelect.createEl("option", { value: "datetime", text: "Date & Time" });
+            typeSelect.value = prop.type || (prop.isList ? "list" : "text");
             if (isCondition) {
                 typeSelect.disabled = true;
                 typeSelect.style.opacity = "0.6";
             } else {
-                typeSelect.addEventListener("change", e => prop.isList = (e.target.value === "list"));
+                typeSelect.addEventListener("change", e => {
+                    prop.type = e.target.value;
+                    prop.isList = (prop.type === "list");
+                });
             }
 
             const valInput = row.createEl("input", { attr: { type: "text", placeholder: "e.g., Christopher Nolan" }, value: prop.defaultValue });
@@ -4168,6 +4210,49 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                     else { this.app?.setting?.open?.(); this.app?.setting?.openTabById?.(this.manifest.id); }
                 });
 
+                const removeEmptyMenuItem = menu.createDiv({ cls: "menu-item taxoflow-remove-empty-menu-item" });
+                const removeEmptyIcon = removeEmptyMenuItem.createDiv({ cls: "menu-item-icon" });
+                if (typeof obsidian_1.setIcon === "function") obsidian_1.setIcon(removeEmptyIcon, "eraser"); else removeEmptyIcon.textContent = "🧹";
+                removeEmptyMenuItem.createDiv({ cls: "menu-item-title", text: "Remove all empty properties" });
+                
+                const activateHoverRemoveEmpty = () => {
+                    menu.querySelectorAll(".menu-item").forEach(item => item.classList.remove("is-selected", "is-focused", "selected"));
+                    removeEmptyMenuItem.classList.add("selected", "is-selected");
+                };
+                removeEmptyMenuItem.addEventListener("pointerenter", activateHoverRemoveEmpty);
+                removeEmptyMenuItem.addEventListener("mousemove", activateHoverRemoveEmpty);
+                removeEmptyMenuItem.addEventListener("focusin", activateHoverRemoveEmpty);
+                removeEmptyMenuItem.addEventListener("pointerleave", () => removeEmptyMenuItem.classList.remove("selected", "is-selected", "is-focused"));
+                removeEmptyMenuItem.addEventListener("click", async event => {
+                    event.preventDefault(); event.stopPropagation(); menu.remove();
+                    
+                    const file = this.app.workspace.getActiveFile();
+                    if (!file) {
+                        new obsidian_1.Notice("No active file to modify properties in.");
+                        return;
+                    }
+
+                    try {
+                        let removedCount = 0;
+                        await this.processFrontMatterSerialized(file, fm => {
+                            for (const k of Object.keys(fm)) {
+                                if (isEmptyPropertyValue(fm[k])) {
+                                    delete fm[k];
+                                    removedCount++;
+                                }
+                            }
+                        });
+                        
+                        if (removedCount > 0) {
+                            new obsidian_1.Notice(`Removed ${removedCount} empty propert${removedCount === 1 ? 'y' : 'ies'}.`);
+                        } else {
+                            new obsidian_1.Notice("No empty properties found to remove.");
+                        }
+                    } catch (error) {
+                        new obsidian_1.Notice(`Failed to remove empty properties: ${error?.message || error}`);
+                    }
+                });
+
                 const propertyContext = this.propertyTypeMenuContextProperty;
                 if (propertyContext) {
                     const rawVal = this.getRawPropertyFromContext(propertyContext, key, "properties");
@@ -4310,7 +4395,7 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                                             if (preserved[prop.key] !== undefined) {
                                                 fm[prop.key] = preserved[prop.key];
                                             } else {
-                                                fm[prop.key] = prop.isList ? parseOptionList(prop.defaultValue) : String(prop.defaultValue || "").trim();
+                                                fm[prop.key] = castPropertyValue(prop.defaultValue, prop.type || (prop.isList ? "list" : "text"));
                                             }
                                         }
                                         
@@ -4674,10 +4759,10 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                     let coreType = this.getCorePropertyType(selector.name);
                     if (!coreType) coreType = Array.isArray(currentVal) ? "list" : "text";
                     
-                    if (coreType !== "text" && coreType !== "list") { localUnsupportedType++; return; }
+                    if (!["text", "list", "number", "checkbox", "date", "datetime"].includes(coreType)) { localUnsupportedType++; return; }
                     if (!this.getOptionsForFrontmatter(selector, frontmatter).includes(defaultValue)) { localInvalidContext++; return; }
                     
-                    frontmatter[selector.name] = coreType === "list" ? [defaultValue] : defaultValue;
+                    frontmatter[selector.name] = castPropertyValue(defaultValue, coreType);
                     localUpdated++;
                 });
                 updated += localUpdated;
@@ -4710,13 +4795,13 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                     let coreType = this.getCorePropertyType(selector.name);
                     if (!coreType) coreType = Array.isArray(frontmatter[selector.name]) ? "list" : "text";
                     
-                    if (coreType !== "text" && coreType !== "list") { skipped++; continue; }
+                    if (!["text", "list", "number", "checkbox", "date", "datetime"].includes(coreType)) { skipped++; continue; }
                     const defaultValue = selector.defaultValue.trim();
                     if (!this.getKnownOptionsForSelector(selector).includes(defaultValue) || !this.getOptionsForFrontmatter(selector, frontmatter).includes(defaultValue)) {
                         skipped++;
                         continue;
                     }
-                    frontmatter[selector.name] = coreType === "list" ? [defaultValue] : defaultValue;
+                    frontmatter[selector.name] = castPropertyValue(defaultValue, coreType);
                     updated++; changed = true;
                 }
                 if (!changed) break;
@@ -4724,6 +4809,66 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         });
         if (updated) this.scheduleSettingsInventoryRefresh(false);
         return { updated, skipped };
+    }
+
+    async applyGlobalPropertyToAllNotes(globalProp) {
+        const files = this.app.vault.getMarkdownFiles();
+        let modifiedCount = 0;
+        const targetKey = globalProp.key;
+        
+        if (!targetKey) {
+            new obsidian_1.Notice("Property key is empty.");
+            return;
+        }
+
+        const progressNotice = new obsidian_1.Notice(`Applying '${targetKey}' to ${files.length} notes...`, 0);
+
+        for (const file of files) {
+            try {
+                await this.app.fileManager.processFrontMatter(file, (fm) => {
+                    const currentKeys = Object.keys(fm || {});
+                    const hasKey = currentKeys.includes(targetKey);
+                    
+                    const valToSet = hasKey ? fm[targetKey] : castPropertyValue(globalProp.defaultValue, globalProp.type || (globalProp.isList ? "list" : "text"));
+                    
+                    const baseKeys = currentKeys.filter(k => k !== targetKey);
+                    
+                    let targetIndex;
+                    const idxStr = String(globalProp.index || "").trim();
+                    const idx = parseInt(idxStr, 10);
+                    
+                    if (!idxStr || isNaN(idx)) {
+                        targetIndex = baseKeys.length;
+                    } else if (idx > 0) {
+                        targetIndex = idx - 1;
+                    } else if (idx < 0) {
+                        targetIndex = baseKeys.length + idx + 1;
+                    } else {
+                        targetIndex = 0;
+                    }
+                    
+                    targetIndex = Math.max(0, Math.min(targetIndex, baseKeys.length));
+
+                    if (hasKey && currentKeys.indexOf(targetKey) === targetIndex && fm[targetKey] === valToSet) {
+                        return; 
+                    }
+
+                    baseKeys.splice(targetIndex, 0, targetKey);
+                    
+                    const temp = { ...fm };
+                    for (const k of currentKeys) delete fm[k];
+                    for (const k of baseKeys) {
+                        fm[k] = (k === targetKey) ? valToSet : temp[k];
+                    }
+                });
+                modifiedCount++;
+            } catch (err) {
+                console.error(`Failed to process frontmatter for ${file.path}:`, err);
+            }
+        }
+        
+        progressNotice.hide();
+        new obsidian_1.Notice(`Successfully applied or moved '${targetKey}' in ${modifiedCount} notes.`);
     }
 
     async applyGlobalDefaultPropertiesForFile(file) {
@@ -4736,7 +4881,7 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                 const key = prop.key.trim();
                 if (!key) continue;
                 if (frontmatter[key] === undefined) {
-                    frontmatter[key] = prop.isList ? parseOptionList(prop.defaultValue) : String(prop.defaultValue || "").trim();
+                    frontmatter[key] = castPropertyValue(prop.defaultValue, prop.type || (prop.isList ? "list" : "text"));
                 }
             }
         });
@@ -5811,7 +5956,12 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
             }
             if (typeof raw !== "string") return null;
             const normalized = raw.trim().toLocaleLowerCase().replace(/[_\s]+/g, "-");
-            return normalized || null;
+            
+            if (["list", "multitext", "tags", "aliases"].includes(normalized)) return "list";
+            if (["text", "number", "checkbox", "date", "datetime", "date-and-time"].includes(normalized)) {
+                return normalized === "date-and-time" ? "datetime" : normalized;
+            }
+            return null;
         };
         const property = context?.matches?.(".metadata-property") ? context : context?.closest?.(".metadata-property");
         const valueContainer = property?.querySelector?.(".metadata-property-value");
