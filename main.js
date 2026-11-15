@@ -4029,6 +4029,21 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
         };
         document.addEventListener("click", this.propertyTypeMenuOptionHandler, true);
         this.app.workspace.onLayoutReady(() => {
+            this.registerEvent(this.app.vault.on("create", file => {
+                if (!(file instanceof obsidian_1.TFile) || file.extension !== "md") return;
+                this.markSelectorOccurrencePathDirty(file);
+                this.scheduleSettingsInventoryRefresh(false);
+
+                window.setTimeout(() => {
+                    if (!this.app.vault.getAbstractFileByPath(file.path)) return;
+                    void this.applyGlobalDefaultPropertiesForFile(file).then(() => {
+                        return this.applyConfiguredDefaultsForFile(file);
+                    }).then(() => {
+                        void this.handleAutoFolderForFile(file);
+                    }).catch(error => console.error("TaxoFlow Properties: could not initialize defaults in new note", file.path, error));
+                }, 220);
+            }));
+
             void this.registerExistingNamespacedProperties().catch(error => console.error("TaxoFlow Properties: could not register existing namespaced properties", error)).finally(async () => {
                 if (this.observer && document.body) {
                     this.observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-property", "data-property-key", "data-property-type", "data-type"] });
@@ -4043,19 +4058,6 @@ class TaxoFlowPlugin extends obsidian_1.Plugin {
                 }
             });
         });
-        this.registerEvent(this.app.vault.on("create", file => {
-            if (!(file instanceof obsidian_1.TFile) || file.extension !== "md") return;
-            this.markSelectorOccurrencePathDirty(file);
-            this.scheduleSettingsInventoryRefresh(false);
-
-            window.setTimeout(() => {
-                void this.applyGlobalDefaultPropertiesForFile(file).then(() => {
-                    return this.applyConfiguredDefaultsForFile(file);
-                }).then(() => {
-                    void this.handleAutoFolderForFile(file);
-                }).catch(error => console.error("TaxoFlow Properties: could not initialize defaults in new note", file.path, error));
-            }, 220);
-        }));
         this.registerEvent(this.app.vault.on("modify", file => {
             if (file instanceof obsidian_1.TFile && file.extension === "md") {
                 this.markSelectorOccurrencePathDirty(file);
